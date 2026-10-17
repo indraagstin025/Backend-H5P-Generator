@@ -1,0 +1,39 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "h5p:seed": "tsx src/h5p/seed.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@lumieducation/h5p-express": "^10.0.5",
+    "@lumieducation/h5p-server": "^10.0.4",
+    "@prisma/client": "^6.19.3",
+    "@xmldom/xmldom": "^0.9.12",
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "fflate": "^0.8.3",
+    "multer": "^2.4.0",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^26.6.5",
+    "prisma": "^6.19.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

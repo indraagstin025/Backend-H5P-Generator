@@ -1,0 +1,70 @@
+// Skema Tahap 2: proyek + slide (struktur) + job ingest.
+// Konversi isi (Tahap 3) dan paket .h5p (Tahap 4) menyusul;
+// kolom dataJson/settingsJson menampung JSON apa adanya hingga saat itu.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id             String     @id @default(uuid())
+  title          String
+  sourceFileName String?
+  sourcePath     String?
+  aspect         String     @default("16:9")
+  settingsJson   String     @default("{}")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  slides         Slide[]
+  jobs           IngestJob[]
+}
+
+model Slide {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  order     Int
+  title     String
+  dataJson  String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, order])
+}
+
+model IngestJob {
+  id        String   @id @default(uuid())
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileName  String
+  status    String   @default("uploaded")
+  progress  Int      @default(0)
+  message   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PreviewSession {
+  id        String   @id @default(uuid())
+  contentId String
+  projectId String?
+  title     String   @default("")
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  attempts  PreviewAttempt[]
+}
+
+model PreviewAttempt {
+  id        String          @id @default(uuid())
+  sessionId String?
+  session   PreviewSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  projectId String?
+  score     Float
+  maxScore  Float
+  createdAt DateTime        @default(now())
+}
