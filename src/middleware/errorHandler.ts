@@ -1,5 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { promises as fs } from "node:fs";
+import { createLogger } from "../utils/logger.js";
+
+const log = createLogger("error");
 
 export function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>,
@@ -22,7 +25,7 @@ export async function discardUploaded(req: Request): Promise<void> {
 }
 
 // eslint tidak dipakai di backend — parameter tak terpakai diawali garis bawah.
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction): void {
   if (err instanceof Error && (err as Error & { code?: string }).code === "LIMIT_FILE_SIZE") {
     res.status(413).json({ error: "File-nya kegedean, maksimal 50 MB." });
     return;
@@ -33,6 +36,14 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       : 500;
   const message =
     err instanceof Error && status !== 500 ? err.message : "Terjadi kesalahan di server.";
-  if (status === 500) console.error(err);
+  if (status === 500) {
+    log.error(`${req.method} ${req.originalUrl} gagal`, {
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+      ip: req.ip,
+    });
+  } else {
+    log.warn(`${req.method} ${req.originalUrl} ditolak (${status}): ${message}`);
+  }
   res.status(status).json({ error: message });
 }

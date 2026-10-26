@@ -5,14 +5,18 @@ import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { startCleanupJob, stopCleanupJob } from "./jobs/cleanup.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { requestLogger } from "./middleware/requestLogger.js";
 import { h5pRouter } from "./routes/h5p.js";
 import { internalRouter } from "./routes/internal.js";
 import { jobsRouter } from "./routes/jobs.js";
 import { projectsRouter } from "./routes/projects.js";
 import { ensureDirs } from "./services/storage.js";
+import { createLogger } from "./utils/logger.js";
 
+const log = createLogger("server");
 const app = express();
 
+app.use(requestLogger);
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 // Aset player mandiri (h5p-standalone frame) + halaman player sesi
@@ -37,11 +41,14 @@ async function main(): Promise<void> {
   await ensureDirs();
   startCleanupJob();
   const server = app.listen(config.port, () => {
-    console.log(`Backend running at http://localhost:${config.port}`);
+    log.info(`Backend berjalan di http://localhost:${config.port}`, {
+      storageDir: config.storageDir,
+      logLevel: process.env.LOG_LEVEL ?? "info",
+    });
   });
 
   const shutdown = async () => {
-    console.log("Shutting down…");
+    log.info("Mematikan backend…");
     stopCleanupJob();
     server.close();
     await prisma.$disconnect();
@@ -49,9 +56,12 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
+  process.on("unhandledRejection", (reason) => {
+    log.error("Promise rejection tanpa handler", reason);
+  });
 }
 
 main().catch((err) => {
-  console.error("Gagal menjalankan backend:", err);
+  log.error("Gagal menjalankan backend", err);
   process.exit(1);
 });

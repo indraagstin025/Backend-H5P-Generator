@@ -6,8 +6,10 @@ import { promisify } from "node:util";
 import { unzipSync } from "fflate";
 import sharp from "sharp";
 import { convertToPngZip, isOnlyOfficeConfigured } from "./onlyoffice.js";
+import { createLogger } from "../utils/logger.js";
 
 const execFileAsync = promisify(execFile);
+const log = createLogger("render");
 
 export interface RendererAvailability {
   onlyoffice: boolean;
@@ -203,7 +205,7 @@ export async function renderBackgrounds(
       const files = await renderWithPowerPoint(sourcePath, outDir);
       return { available: true, files };
     } catch (err) {
-      console.warn("[render] PowerPoint gagal, lanjut OnlyOffice:", err instanceof Error ? err.message : err);
+      log.warn("PowerPoint gagal, lanjut OnlyOffice", err instanceof Error ? err.message : err);
     }
   }
   if (!isOnlyOfficeConfigured()) return { available: false, files: [] };

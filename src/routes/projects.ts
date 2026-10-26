@@ -9,6 +9,7 @@ import { asyncHandler } from "../middleware/errorHandler.js";
 import { uploadSource } from "../middleware/upload.js";
 import { ingestUpload } from "../services/ingest.js";
 import { projectDir } from "../services/storage.js";
+import { createLogger } from "../utils/logger.js";
 import {
   createProject,
   deleteProject,
@@ -16,6 +17,8 @@ import {
   listProjects,
   renameProject,
 } from "../services/projects.js";
+
+const log = createLogger("ingest");
 
 export const projectsRouter = Router();
 
@@ -56,7 +59,7 @@ projectsRouter.delete("/:id", asyncHandler(async (req, res) => {
 projectsRouter.post("/ingest", uploadSource.single("sourceFile"), asyncHandler(async (req, res) => {
   const result = await ingestUpload(req, String(req.body?.title ?? ""));
   const jobId = (result.job as { id: string }).id;
-  void runIngestJob(jobId).catch((err) => console.error("[ingest] job gagal:", err));
+  void runIngestJob(jobId).catch((err) => log.error(`Job ingest ${jobId} gagal`, err));
   res.status(202).json({ data: result });
 }));
 

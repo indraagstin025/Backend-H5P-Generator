@@ -1,8 +1,10 @@
 import { strFromU8, unzipSync } from "fflate";
 import path from "node:path";
 import { prisma } from "../db.js";
+import { createLogger } from "../utils/logger.js";
 import { getH5P, systemUser } from "./h5pService.js";
 
+const log = createLogger("h5p");
 const SESSION_TTL_MS = 24 * 3600 * 1000;
 
 export interface PreviewSessionInfo {
@@ -29,7 +31,10 @@ export async function getLibraryFile(
       file,
     )
     .catch(() => null);
-  if (!stats) throw Object.assign(new Error("File library tidak ditemukan."), { status: 404 });
+  if (!stats) {
+    log.warn("File library tidak ditemukan", { ubername, file });
+    throw Object.assign(new Error("File library tidak ditemukan."), { status: 404 });
+  }
   const stream = await libraryStorage.getFileStream(
     { machineName: m[1], majorVersion: Number(m[2]), minorVersion: Number(m[3]) },
     file,
@@ -67,18 +72,30 @@ export async function getSessionFile(
   filePath: string,
 ): Promise<{ data?: Uint8Array; stream?: NodeJS.ReadableStream; mime: string } | null> {
   const session = await prisma.previewSession.findUnique({ where: { id: sessionId } });
-  if (!session || session.expiresAt.getTime() < Date.now()) return null;
+  if (!session || session.expiresAt.getTime() < Date.now()) {
+    log.warn("File sesi diminta, tetapi sesi tidak ada atau kedaluwarsa", { sessionId, filePath });
+    return null;
+  }
   const { contentStorage } = await getH5P();
   if (!filePath || filePath === "h5p.json") {
     const metadata = await contentStorage.getMetadata(session.contentId, systemUser).catch(() => null);
-    if (!metadata) return null;
+    if (!metadata) {
+      log.warn("Metadata sesi tidak ditemukan", { sessionId, contentId: session.contentId });
+      return null;
+    }
     return { data: new TextEncoder().encode(JSON.stringify(metadata)), mime: "application/json" };
   }
   const rel = filePath.replace(/^content\//, "");
   try {
     const stream = await contentStorage.getFileStream(session.contentId, rel, systemUser);
     return { stream, mime: mimeFor(rel) };
-  } catch {
+  } catch (err) {
+    log.warn("File konten sesi tidak ditemukan", {
+      sessionId,
+      contentId: session.contentId,
+      filePath: rel,
+      message: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -151,6 +168,13 @@ export async function createPreviewSession(
       title: manifest.title || title,
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     },
+  });
+  log.info("Sesi pratinjau dibuat", {
+    sessionId: session.id,
+    contentId: String(contentId),
+    projectId: projectId ?? null,
+    title: session.title,
+    files: Object.keys(entries).length,
   });
   return {
     sessionId: session.id,
@@ -238,6 +262,7 @@ export async function recordFinish(
   const attempt = await prisma.previewAttempt.create({
     data: { sessionId, projectId: session.projectId, score, maxScore },
   });
+  log.debug("Skor sesi pratinjau dicatat", { sessionId, score, maxScore });
   // Batas wajar: simpan 50 percobaan terakhir per sesi
   const extras = await prisma.previewAttempt.findMany({
     where: { sessionId },
