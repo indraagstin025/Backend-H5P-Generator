@@ -61,3 +61,33 @@ export async function attachSourceFile(
     data: { sourceFileName: path.basename(fileName), sourcePath: dest },
   });
 }
+
+export async function saveProjectSlides(projectId: string, slides: any[]) {
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) throw Object.assign(new Error("Proyek tidak ditemukan."), { status: 404 });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.slide.deleteMany({ where: { projectId } });
+    for (const [idx, s] of slides.entries()) {
+      await tx.slide.create({
+        data: {
+          id: s.id && !s.id.includes("copy") && !s.id.startsWith("temp") && s.id.length <= 36 ? s.id : undefined,
+          projectId,
+          order: s.order ?? idx + 1,
+          title: s.title || `Slide ${idx + 1}`,
+          dataJson: JSON.stringify({
+            chapter: s.chapter,
+            tone: s.tone,
+            aspect: s.aspect,
+            keywords: s.keywords,
+            background: s.background ?? s.backgroundUrl ?? null,
+            elements: s.elements ?? [],
+          }),
+        },
+      });
+    }
+    await tx.project.update({ where: { id: projectId }, data: { updatedAt: new Date() } });
+  });
+
+  return getProject(projectId);
+}

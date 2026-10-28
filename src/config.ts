@@ -8,7 +8,7 @@ function num(name: string, fallback: number): number {
 
 export const config = {
   port: num("PORT", 3000),
-  databaseUrl: process.env.DATABASE_URL ?? "file:../storage/h5pgen.db",
+  databaseUrl: process.env.DATABASE_URL ?? "postgresql://postgres@localhost:5432/H5P_Generator?schema=public",
   storageDir: path.resolve(process.env.STORAGE_DIR ?? "./storage"),
   maxUploadBytes: num("MAX_UPLOAD_BYTES", 50 * 1024 * 1024),
   maxSlidesPerProject: num("MAX_SLIDES_PER_PROJECT", 60),

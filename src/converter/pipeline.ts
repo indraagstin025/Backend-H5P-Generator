@@ -28,7 +28,7 @@ async function persistElement(
   const { file: _file, objectUrl: _url, ...rest } = el as SlideElement & { file?: File | null; objectUrl?: string | null };
   void _file;
   void _url;
-  if ((el.kind === "image" || el.kind === "audio") && el.file) {
+  if ((el.kind === "image" || el.kind === "audio" || el.kind === "video") && el.file) {
     const buf = new Uint8Array(await el.file.arrayBuffer());
     const origExt = (el.fileName.split(".").pop() ?? "bin").toLowerCase();
     let fileName = `${prefix}-${el.id.slice(0, 8)}.${origExt}`;

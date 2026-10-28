@@ -15,7 +15,7 @@ export interface StoredPosition {
 
 export interface StoredElement extends Record<string, unknown> {
   id: string;
-  kind: "advancedText" | "image" | "audio" | "goToSlide" | "multiChoice" | "trueFalse" | "blanks";
+  kind: string;
   position: StoredPosition;
   displayAsButton: boolean;
   buttonLabel: string;
@@ -42,10 +42,11 @@ const IMAGE_MIME: Record<string, string> = {
   svg: "image/svg+xml",
 };
 const AUDIO_MIME: Record<string, string> = { mp3: "audio/mpeg", wav: "audio/wav" };
+const VIDEO_MIME: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", ogv: "video/ogg" };
 
 function mimeFor(kind: string, assetPath: string): string {
   const ext = assetPath.split(".").pop()?.toLowerCase() ?? "";
-  const map = kind === "audio" ? AUDIO_MIME : IMAGE_MIME;
+  const map = kind === "audio" ? AUDIO_MIME : kind === "video" ? VIDEO_MIME : IMAGE_MIME;
   return map[ext] ?? "application/octet-stream";
 }
 
@@ -165,6 +166,50 @@ function toAction(
         params: { text, questions: answers, behaviour: behaviourOf(el, { enableCheckButton: true }) },
       };
     }
+    case "video": {
+      const contentPath = remapAsset(str(el.asset), "video");
+      return {
+        library: libs.get("H5P.Video"),
+        params: {
+          sources: [{ path: contentPath, mime: mimeFor("video", contentPath), copyright: { license: "U" } }],
+          visuals: { poster: undefined, fit: false, controls: true },
+        },
+      };
+    }
+    case "singleChoice": {
+      return {
+        library: libs.get("H5P.SingleChoiceSet"),
+        params: {
+          choices: [
+            {
+              question: str(el.question),
+              answers: optionsOf(el).map((o) => o.text),
+            },
+          ],
+          behaviour: behaviourOf(el),
+        },
+      };
+    }
+    case "dragWords": {
+      return {
+        library: libs.get("H5P.DragText"),
+        params: {
+          taskDescription: "Tarik kata-kata ke tempat yang tepat",
+          textField: str(el.text),
+          behaviour: behaviourOf(el, { enableRetry: true }),
+        },
+      };
+    }
+    case "markWords": {
+      return {
+        library: libs.get("H5P.MarkTheWords"),
+        params: {
+          taskDescription: "Tandai kata yang tepat",
+          textField: str(el.text),
+          behaviour: behaviourOf(el),
+        },
+      };
+    }
     case "goToSlide":
       return null;
   }
@@ -207,9 +252,13 @@ const ACTION_LIB: Record<string, string> = {
   advancedText: "H5P.AdvancedText",
   image: "H5P.Image",
   audio: "H5P.Audio",
+  video: "H5P.Video",
   multiChoice: "H5P.MultiChoice",
+  singleChoice: "H5P.SingleChoiceSet",
   trueFalse: "H5P.TrueFalse",
   blanks: "H5P.Blanks",
+  dragWords: "H5P.DragText",
+  markWords: "H5P.MarkTheWords",
 };
 
 /** Kumpulkan machineName yang dibutuhkan + rakit params CoursePresentation. */

@@ -16,6 +16,7 @@ import {
   getProject,
   listProjects,
   renameProject,
+  saveProjectSlides,
 } from "../services/projects.js";
 
 const log = createLogger("ingest");
@@ -64,6 +65,19 @@ projectsRouter.post("/ingest", uploadSource.single("sourceFile"), asyncHandler(a
 }));
 
 // Slide hasil konversi: struktur siap Tahap 3 (latar presisi bila renderer ada)
+
+// Simpan pembaruan slide dari Studio Editor: PUT /api/projects/:id/slides
+projectsRouter.put("/:id/slides", asyncHandler(async (req, res) => {
+  const projectId = paramId(req.params.id);
+  const raw = Array.isArray(req.body) ? req.body : Array.isArray(req.body?.slides) ? req.body.slides : null;
+  if (!raw) {
+    res.status(400).json({ error: "Format data slide tidak valid. Harapkan array slide." });
+    return;
+  }
+  const saved = await saveProjectSlides(projectId, raw);
+  res.json({ data: saved });
+}));
+
 projectsRouter.get("/:id/slides", asyncHandler(async (req, res) => {
   const projectId = paramId(req.params.id);
   const rows = await prisma.slide.findMany({
