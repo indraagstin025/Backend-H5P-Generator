@@ -134,14 +134,34 @@ export function checkIssues(slides: SlideRow[], dir: string): { issues: string[]
         if (opts.some((o) => !(o.text ?? "").trim())) issues.push(`Slide ${s.order}: ada pilihan jawaban yang masih kosong.`);
         if (!String((el as Record<string, unknown>).question ?? "").trim()) issues.push(`Slide ${s.order}: pertanyaan kuisnya masih kosong.`);
       }
+      if (el.kind === "singleChoice") {
+        const opts = (Array.isArray((el as Record<string, unknown>).options) ? (el as unknown as { options: Array<{ text?: string; correct?: boolean }> }).options : []);
+        if (opts.length < 2) issues.push(`Slide ${s.order}: kuis pilihan tunggal minimal 2 pilihan jawaban.`);
+        if (opts.filter((o) => o.correct).length !== 1) issues.push(`Slide ${s.order}: kuis pilihan tunggal harus memiliki tepat 1 jawaban benar.`);
+        if (opts.some((o) => !(o.text ?? "").trim())) issues.push(`Slide ${s.order}: ada pilihan jawaban yang masih kosong.`);
+        if (!String((el as Record<string, unknown>).question ?? "").trim()) issues.push(`Slide ${s.order}: pertanyaan kuisnya masih kosong.`);
+      }
       if (el.kind === "trueFalse" && !String((el as Record<string, unknown>).question ?? "").trim()) {
         issues.push(`Slide ${s.order}: pertanyaan kuisnya masih kosong.`);
       }
       if (el.kind === "blanks" && countBlanks(String((el as Record<string, unknown>).text ?? "")) === 0) {
         issues.push(`Slide ${s.order}: kuis isian belum punya jawaban *berbintang*.`);
       }
+      if (el.kind === "dragWords" && countBlanks(String((el as Record<string, unknown>).text ?? "")) === 0) {
+        issues.push(`Slide ${s.order}: kuis Drag the Words belum punya kata *berbintang*.`);
+      }
+      if (el.kind === "markWords" && countBlanks(String((el as Record<string, unknown>).text ?? "")) === 0) {
+        issues.push(`Slide ${s.order}: kuis Mark the Words belum punya kata kunci *berbintang*.`);
+      }
       if ((el.kind === "image" || el.kind === "audio") && !(el as Record<string, unknown>).asset) {
         issues.push(`Slide ${s.order}: ${el.kind === "image" ? "Gambar" : "Suara"} belum ada file-nya.`);
+      }
+      if (el.kind === "video") {
+        const asset = (el as Record<string, unknown>).asset;
+        const videoUrl = String((el as Record<string, unknown>).videoUrl ?? "").trim();
+        if (!asset && !videoUrl) {
+          issues.push(`Slide ${s.order}: Video belum ada berkas atau tautan URL-nya.`);
+        }
       }
     }
     if (s.data.backgroundPending) warnings.push(`Slide ${s.order}: latar presisi belum ada — dipakai gradien pengganti.`);
@@ -156,7 +176,8 @@ export async function buildExportReport(projectId: string): Promise<ExportReport
   const cp = await installedLibraryVersion("H5P.CoursePresentation");
   const libraries = cp ? [cp] : [];
   if (!cp) issues.push("Library H5P.CoursePresentation belum terinstal di server. Jalankan: npm run h5p:seed");
-  const quizCount = slides.flatMap((s) => s.data.elements ?? []).filter((e) => e.kind === "multiChoice" || e.kind === "trueFalse" || e.kind === "blanks").length;
+  const QUIZ_KINDS = new Set(["multiChoice", "singleChoice", "trueFalse", "blanks", "dragWords", "markWords"]);
+  const quizCount = slides.flatMap((s) => s.data.elements ?? []).filter((e) => QUIZ_KINDS.has(e.kind)).length;
   return {
     ok: issues.length === 0,
     issues,
@@ -191,7 +212,8 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
   const files: ContentFile[] = [];
   const remapAsset = (storedPath: string, kind: string): string => {
     const base = storedPath.split("/").pop() ?? storedPath;
-    const contentPath = `${kind === "audio" ? "audios" : "images"}/${base}`;
+    const folder = kind === "audio" ? "audios" : kind === "video" ? "videos" : "images";
+    const contentPath = `${folder}/${base}`;
     files.push({ contentPath, absPath: path.join(dir, storedPath) });
     return contentPath;
   };
