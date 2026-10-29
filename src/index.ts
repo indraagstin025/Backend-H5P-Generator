@@ -18,7 +18,12 @@ const app = express();
 
 app.use(requestLogger);
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+
+// Batas parser JSON dan URL-encoded dinaikkan ke 50mb untuk menampung data
+// proyek presentasi dengan banyak slide dan elemen interaktif (mencegah HTTP 413)
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
 // Aset player mandiri (h5p-standalone frame) + halaman player sesi
 app.use("/h5p-vendor", express.static(path.join(process.cwd(), "public", "h5p-vendor")));
 
