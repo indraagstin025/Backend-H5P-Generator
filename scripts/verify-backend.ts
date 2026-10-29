@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { toCpElement, StoredElement, StoredSlide, LibVersions } from "../src/h5p/contentMapper.js";
 import { checkIssues, SlideRow } from "../src/h5p/exporter.js";
+import { convertPdfToSlides } from "../src/converter/pdfRenderer.js";
 
 // Mock LibVersions
 const mockLibs: LibVersions = {
@@ -271,6 +275,52 @@ async function runSanityTests() {
     assert.equal(result.issues.length, 0, `Harusnya tidak ada issue, ditemukan: ${result.issues.join(", ")}`);
     console.log("✓ Test 7 Lolos: checkIssues menerima slide yang valid tanpa error.");
     passedCount++;
+  }
+
+  // ----------------------------------------------------
+  // TEST 8: Konversi Dokumen PDF ke Gambar Latar Slide via PDFium
+  // ----------------------------------------------------
+  {
+    // Struktur berkas PDF 1.4 minimal yang valid untuk pengujian
+    const minimalPdf =
+      "%PDF-1.4\n" +
+      "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n" +
+      "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n" +
+      "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >> endobj\n" +
+      "xref\n" +
+      "0 4\n" +
+      "0000000000 65535 f \n" +
+      "0000000009 00000 n \n" +
+      "0000000058 00000 n \n" +
+      "0000000115 00000 n \n" +
+      "trailer << /Size 4 /Root 1 0 R >>\n" +
+      "startxref\n" +
+      "206\n" +
+      "%%EOF\n";
+
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-test-"));
+    const tmpPdfPath = path.join(tmpDir, "test-document.pdf");
+    const tmpOutDir = path.join(tmpDir, "assets");
+    await fs.mkdir(tmpOutDir, { recursive: true });
+    await fs.writeFile(tmpPdfPath, Buffer.from(minimalPdf));
+
+    try {
+      const pdfResult = await convertPdfToSlides(tmpPdfPath, tmpOutDir);
+      assert.equal(pdfResult.slideCount, 1);
+      assert.equal(pdfResult.slides.length, 1);
+      assert.equal(pdfResult.slides[0].imageFileName, "slide-1.jpg");
+      assert.equal(pdfResult.backgroundFiles.length, 1);
+
+      // Verifikasi fisik berkas gambar latar slide benar-benar dibuat di disk
+      const stat = await fs.stat(pdfResult.backgroundFiles[0]);
+      assert.ok(stat.isFile() && stat.size > 0, "Berkas gambar latar slide PDF harus terbentuk dan tidak kosong.");
+
+      console.log("✓ Test 8 Lolos: Konversi PDF ke gambar latar slide via WebAssembly PDFium berhasil 100%.");
+      passedCount++;
+    } finally {
+      // Bersihkan folder pengujian sementara
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   console.log(`\n=================================================`);
