@@ -62,6 +62,22 @@ export async function attachSourceFile(
   });
 }
 
+/**
+ * Normalisasi URL atau path relatif aset dari frontend menjadi path lokal konsisten "assets/<nama-berkas>".
+ * Menangani kasus di mana frontend mengirim URL penuh (http://.../assets/slide-1.jpg),
+ * path API (/projects/.../assets/slide-1.jpg), atau path lokal (assets/slide-1.jpg).
+ */
+function normalizeAssetToLocalPath(val: unknown): string | null {
+  if (typeof val !== "string" || !val.trim()) return null;
+  const clean = val.trim();
+  // Pisahkan query parameter atau hash jika ada
+  const noQuery = clean.split("?")[0].split("#")[0];
+  // Ambil nama berkas murni
+  const filename = noQuery.split("/").pop()?.split("\\").pop();
+  if (!filename || (filename === clean && !clean.includes("."))) return clean;
+  return `assets/${filename}`;
+}
+
 export async function saveProjectSlides(projectId: string, slides: any[]) {
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) throw Object.assign(new Error("Proyek tidak ditemukan."), { status: 404 });
@@ -69,6 +85,25 @@ export async function saveProjectSlides(projectId: string, slides: any[]) {
   await prisma.$transaction(async (tx) => {
     await tx.slide.deleteMany({ where: { projectId } });
     for (const [idx, s] of slides.entries()) {
+      // Normalisasi latar slide agar tersimpan sebagai path lokal konsisten
+      const rawBg = s.background ?? s.backgroundUrl ?? null;
+      const normalizedBg = normalizeAssetToLocalPath(rawBg);
+
+      // Normalisasi aset media di setiap elemen (gambar, suara, video)
+      const normalizedElements = (s.elements ?? []).map((el: Record<string, unknown>) => {
+        if (!el || typeof el !== "object") return el;
+        const kind = String(el.kind ?? "");
+        if (kind === "image" || kind === "audio" || kind === "video") {
+          const rawAsset = el.asset ?? el.assetUrl ?? el.objectUrl;
+          const normalized = normalizeAssetToLocalPath(rawAsset);
+          return {
+            ...el,
+            asset: normalized ?? el.asset,
+          };
+        }
+        return el;
+      });
+
       await tx.slide.create({
         data: {
           id: s.id && !s.id.includes("copy") && !s.id.startsWith("temp") && s.id.length <= 36 ? s.id : undefined,
@@ -80,8 +115,8 @@ export async function saveProjectSlides(projectId: string, slides: any[]) {
             tone: s.tone,
             aspect: s.aspect,
             keywords: s.keywords,
-            background: s.background ?? s.backgroundUrl ?? null,
-            elements: s.elements ?? [],
+            background: normalizedBg,
+            elements: normalizedElements,
           }),
         },
       });
