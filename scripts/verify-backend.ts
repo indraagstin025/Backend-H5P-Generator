@@ -5,6 +5,7 @@ import path from "node:path";
 import { toCpElement, StoredElement, StoredSlide, LibVersions } from "../src/h5p/contentMapper.js";
 import { checkIssues, SlideRow } from "../src/h5p/exporter.js";
 import { convertPdfToSlides } from "../src/converter/pdfRenderer.js";
+import { validateSourceFileContent } from "../src/services/uploadValidator.js";
 
 // Mock LibVersions
 const mockLibs: LibVersions = {
@@ -325,6 +326,54 @@ async function runSanityTests() {
       passedCount++;
     } finally {
       // Bersihkan folder pengujian sementara
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  // ----------------------------------------------------
+  // TEST 9: Validasi Ketat Magic Bytes Biner & Penolakan Berkas Terkunci
+  // ----------------------------------------------------
+  {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "validator-test-"));
+    try {
+      // Kasus A: Berkas palsu (file teks biasa dinamai .pdf) -> harus ditolak
+      const fakePdfPath = path.join(tmpDir, "fake.pdf");
+      await fs.writeFile(fakePdfPath, "Ini bukan pdf, hanya file teks sembarangan");
+      await assert.rejects(
+        () => validateSourceFileContent(fakePdfPath, "fake.pdf"),
+        /bukan dokumen PDF yang valid/i,
+        "File dengan ekstensi .pdf palsu harus ditolak oleh magic bytes check",
+      );
+
+      // Kasus B: Berkas palsu (file teks biasa dinamai .pptx) -> harus ditolak
+      const fakePptxPath = path.join(tmpDir, "fake.pptx");
+      await fs.writeFile(fakePptxPath, "Ini bukan file zip pptx");
+      await assert.rejects(
+        () => validateSourceFileContent(fakePptxPath, "fake.pptx"),
+        /bukan presentasi PowerPoint/i,
+        "File dengan ekstensi .pptx palsu harus ditolak oleh ZIP signature check",
+      );
+
+      // Kasus C: Berkas PDF terkunci kata sandi (mengandung kamus /Encrypt) -> harus ditolak
+      const encryptedPdfPath = path.join(tmpDir, "encrypted.pdf");
+      const encryptedPdfContent =
+        "%PDF-1.4\n" +
+        "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n" +
+        "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n" +
+        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >> endobj\n" +
+        "4 0 obj << /Filter /Standard /V 2 /R 3 /O (fake) /U (fake) /P -4 >> endobj\n" +
+        "xref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000200 00000 n \n" +
+        "trailer << /Size 5 /Root 1 0 R /Encrypt 4 0 R >>\nstartxref\n320\n%%EOF\n";
+      await fs.writeFile(encryptedPdfPath, Buffer.from(encryptedPdfContent));
+      await assert.rejects(
+        () => validateSourceFileContent(encryptedPdfPath, "encrypted.pdf"),
+        /dilindungi kata sandi/i,
+        "File PDF yang dilindungi kata sandi wajib ditolak oleh validator",
+      );
+
+      console.log("✓ Test 9 Lolos: Validasi biner asli dan penolakan PDF terkunci bekerja 100% akurat.");
+      passedCount++;
+    } finally {
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
