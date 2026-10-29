@@ -85,7 +85,7 @@ export function safeFileName(title: string): string {
   return `${clean || "modul"}.h5p`;
 }
 
-interface SlideRow {
+export interface SlideRow {
   order: number;
   title: string;
   data: StoredSlide;

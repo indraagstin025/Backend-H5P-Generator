@@ -10,7 +10,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "h5p:seed": "tsx src/h5p/seed.ts"
+    "h5p:seed": "tsx src/h5p/seed.ts",
+    "test:sanity": "tsx scripts/verify-backend.ts"
   },
   "keywords": [],
   "author": "",
