@@ -315,7 +315,13 @@ async function runSanityTests() {
       const stat = await fs.stat(pdfResult.backgroundFiles[0]);
       assert.ok(stat.isFile() && stat.size > 0, "Berkas gambar latar slide PDF harus terbentuk dan tidak kosong.");
 
-      console.log("✓ Test 8 Lolos: Konversi PDF ke gambar latar slide via WebAssembly PDFium berhasil 100%.");
+      // Verifikasi resolusi gambar tepat landscape 1920x1080 (rasio 16:9 baku slide H5P)
+      const sharp = (await import("sharp")).default;
+      const meta = await sharp(pdfResult.backgroundFiles[0]).metadata();
+      assert.equal(meta.width, 1920, "Lebar gambar latar slide harus 1920px (landscape)");
+      assert.equal(meta.height, 1080, "Tinggi gambar latar slide harus 1080px (landscape)");
+
+      console.log("✓ Test 8 Lolos: Konversi PDF ke gambar latar slide via WebAssembly PDFium berhasil 100% (Landscape 1920x1080).");
       passedCount++;
     } finally {
       // Bersihkan folder pengujian sementara
