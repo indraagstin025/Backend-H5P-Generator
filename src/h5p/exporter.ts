@@ -153,12 +153,16 @@ export function checkIssues(slides: SlideRow[], dir: string): { issues: string[]
       if (el.kind === "markWords" && countBlanks(String((el as Record<string, unknown>).text ?? "")) === 0) {
         issues.push(`Slide ${s.order}: kuis Mark the Words belum punya kata kunci *berbintang*.`);
       }
-      if ((el.kind === "image" || el.kind === "audio") && !(el as Record<string, unknown>).asset) {
-        issues.push(`Slide ${s.order}: ${el.kind === "image" ? "Gambar" : "Suara"} belum ada file-nya.`);
+      if ((el.kind === "image" || el.kind === "audio")) {
+        const raw = el as Record<string, unknown>;
+        if (!raw.asset && !raw.assetUrl && !raw.objectUrl) {
+          issues.push(`Slide ${s.order}: ${el.kind === "image" ? "Gambar" : "Suara"} belum ada file-nya.`);
+        }
       }
       if (el.kind === "video") {
-        const asset = (el as Record<string, unknown>).asset;
-        const videoUrl = String((el as Record<string, unknown>).videoUrl ?? "").trim();
+        const raw = el as Record<string, unknown>;
+        const asset = raw.asset || raw.assetUrl || raw.objectUrl;
+        const videoUrl = String(raw.videoUrl ?? "").trim();
         if (!asset && !videoUrl) {
           issues.push(`Slide ${s.order}: Video belum ada berkas atau tautan URL-nya.`);
         }
@@ -210,23 +214,29 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
   const settings = project.settings;
   const bool = (v: unknown, fallback: boolean) => (typeof v === "boolean" ? v : fallback);
   const files: ContentFile[] = [];
+
+  // Pemetaan aset media (gambar, suara, video) ke subfolder paket H5P dan lokasi fisik di disk
   const remapAsset = (storedPath: string, kind: string): string => {
-    const base = storedPath.split("/").pop() ?? storedPath;
+    // Ambil nama berkas murni (membersihkan parameter URL jika ada)
+    const clean = storedPath.split("?")[0].split("#")[0];
+    const base = path.basename(clean.replace(/\\/g, "/"));
     const folder = kind === "audio" ? "audios" : kind === "video" ? "videos" : "images";
     const contentPath = `${folder}/${base}`;
-    files.push({ contentPath, absPath: path.join(dir, storedPath) });
+    // Aset proyek selalu tersimpan di subfolder assets/ pada direktori proyek
+    files.push({ contentPath, absPath: path.join(dir, "assets", base) });
     return contentPath;
   };
+
+  // Pemetaan berkas gambar latar slide ke subfolder images/ pada paket H5P
   const backgroundPath = (idx: number): string | null => {
     const s = slides[idx];
-    if (!s) return null;
-    if (s.data.background) {
-      const base = s.data.background.split("/").pop() ?? s.data.background;
-      const contentPath = `images/${base}`;
-      files.push({ contentPath, absPath: path.join(dir, s.data.background) });
-      return contentPath;
-    }
-    return null;
+    if (!s || !s.data.background) return null;
+    const clean = s.data.background.split("?")[0].split("#")[0];
+    const base = path.basename(clean.replace(/\\/g, "/"));
+    const contentPath = `images/${base}`;
+    // Gambar latar slide tersimpan di folder assets/ pada direktori proyek
+    files.push({ contentPath, absPath: path.join(dir, "assets", base) });
+    return contentPath;
   };
 
   const { params, mainLibraryUbername } = await buildContentParams(
