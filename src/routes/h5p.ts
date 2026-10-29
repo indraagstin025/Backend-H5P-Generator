@@ -3,9 +3,10 @@ import { Router } from "express";
 import { asyncHandler } from "../middleware/errorHandler.js";
 import { validateClientPackage } from "../h5p/exporter.js";
 
+// Batas upload file paket .h5p diselaraskan dengan batas upload sumber materi (50 MB)
 const uploadH5p = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 30 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 50 * 1024 * 1024, files: 1 },
   fileFilter: (_req, file, cb) => {
     if (!file.originalname.toLowerCase().endsWith(".h5p")) {
       cb(Object.assign(new Error("Pakai file .h5p ya."), { status: 400 }));
@@ -19,7 +20,7 @@ export const h5pRouter = Router();
 
 /**
  * Validasi paket .h5p rakitan browser terhadap library server (Tahap 4).
- * Body: multipart field `package` (.h5p ≤30MB).
+ * Body: multipart field `package` (.h5p ≤50MB).
  */
 h5pRouter.post("/packages/validate", uploadH5p.single("package"), asyncHandler(async (req, res) => {
   const file = (req as typeof req & { file?: Express.Multer.File }).file;
@@ -32,7 +33,7 @@ h5pRouter.post("/packages/validate", uploadH5p.single("package"), asyncHandler(a
 
 /**
  * Sesi pratinjau player server (Tahap 5). Body: multipart field `package`
- * (.h5p rakitan browser ≤30MB) + opsional `title`, `projectId`.
+ * (.h5p rakitan browser ≤50MB) + opsional `title`, `projectId`.
  */
 h5pRouter.post("/preview-sessions", uploadH5p.single("package"), asyncHandler(async (req, res) => {
   const file = (req as typeof req & { file?: Express.Multer.File }).file;
