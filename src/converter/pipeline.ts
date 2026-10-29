@@ -5,6 +5,7 @@ import { config } from "../config.js";
 import { projectDir } from "../services/storage.js";
 import { ensureDom } from "./domShim.js";
 import { inspectPdf } from "./pdfInspector.js";
+import { convertPdfToSlides } from "./pdfRenderer.js";
 import { buildSlidesFromPptx } from "./pptxConverter.js";
 import { inspectPptx } from "./pptxParser.js";
 import { optimizeImage, renderBackgrounds } from "./renderer.js";
@@ -79,9 +80,15 @@ export async function runIngestJob(jobId: string): Promise<void> {
     const ext = path.extname(project.sourceFileName ?? "").toLowerCase();
     const raw = await fs.readFile(sourcePath);
 
+    const dir = projectDir(project.id);
+    const assetsDir = path.join(dir, "assets");
+    await fs.mkdir(assetsDir, { recursive: true });
+
     let slides: Slide[];
     let aspect: "16:9" | "4:3" = "16:9";
     let counts = { hotspots: 0, notes: 0, media: 0, quizzes: 0 };
+    let backgrounds: Array<string | null> = [];
+    let backgroundPending = false;
 
     if (ext === ".pptx") {
       const info = await inspectPptx(toFile(project.sourceFileName ?? "materi.pptx", raw, "application/vnd.openxmlformats-officedocument.presentationml.presentation"));
@@ -94,34 +101,50 @@ export async function runIngestJob(jobId: string): Promise<void> {
       const built = buildSlidesFromPptx(info);
       slides = built.slides;
       counts = built.counts;
-    } else {
-      const pdf = await inspectPdf(toFile(project.sourceFileName ?? "materi.pdf", raw, "application/pdf"));
-      if (pdf.pageCount < 1) throw new Error("Tidak ada halaman yang bisa dibaca dari file ini.");
-      if (pdf.pageCount > config.maxSlidesPerProject) {
-        throw new Error(`File-nya ada ${pdf.pageCount} halaman, maksimal ${config.maxSlidesPerProject} slide per materi.`);
+
+      backgrounds = new Array<string | null>(slides.length).fill(null);
+      await setJob(jobId, { status: "rendering", progress: 65, message: "Merender latar slide PowerPoint…" });
+      const rendered = await renderBackgrounds(sourcePath, assetsDir, ext).catch(() => ({ available: false as const, files: [] as string[] }));
+      if (rendered.available) {
+        rendered.files.forEach((abs, i) => {
+          if (i < backgrounds.length) backgrounds[i] = `assets/${path.basename(abs)}`;
+        });
+        await setJob(jobId, { status: "rendering", progress: 95, message: `${rendered.files.length} latar slide dirender.` });
+      } else {
+        backgroundPending = true;
       }
-      slides = Array.from({ length: pdf.pageCount }, (_, i) => createSlide(i + 1, `Halaman ${i + 1}`, aspect));
-    }
-
-    // Persistensi slide + aset media
-    await setJob(jobId, { status: "persisting", progress: 60, message: `Menyimpan ${slides.length} slide…` });
-    const dir = projectDir(project.id);
-    const assetsDir = path.join(dir, "assets");
-    await fs.mkdir(assetsDir, { recursive: true });
-    await prisma.slide.deleteMany({ where: { projectId: project.id } });
-
-    const backgrounds = new Array<string | null>(slides.length).fill(null);
-    let backgroundPending = false;
-    await setJob(jobId, { status: "rendering", progress: 65, message: "Merender latar slide…" });
-    const rendered = await renderBackgrounds(sourcePath, assetsDir, ext).catch(() => ({ available: false as const, files: [] as string[] }));
-    if (rendered.available) {
-      rendered.files.forEach((abs, i) => {
-        if (i < backgrounds.length) backgrounds[i] = `assets/${path.basename(abs)}`;
-      });
-      await setJob(jobId, { status: "rendering", progress: 95, message: `${rendered.files.length} latar slide dirender.` });
     } else {
-      backgroundPending = true;
+      // Jalur Konversi PDF: Ekstraksi teks & render latar via WebAssembly PDFium
+      await setJob(jobId, { status: "parsing", progress: 30, message: "Membaca halaman dokumen PDF…" });
+      const pdfResult = await convertPdfToSlides(sourcePath, assetsDir);
+      if (pdfResult.slideCount < 1) throw new Error("Tidak ada halaman yang bisa dibaca dari file PDF ini.");
+      if (pdfResult.slideCount > config.maxSlidesPerProject) {
+        throw new Error(`File PDF memiliki ${pdfResult.slideCount} halaman, maksimal ${config.maxSlidesPerProject} slide per materi.`);
+      }
+
+      aspect = pdfResult.aspect;
+      backgrounds = pdfResult.slides.map((s) => s.imagePath);
+      backgroundPending = false;
+
+      // Bangun struktur slide H5P dengan judul dan kata kunci nyata dari halaman PDF
+      slides = pdfResult.slides.map((s) => ({
+        id: `slide-${s.pageNumber}`,
+        order: s.pageNumber,
+        title: s.title,
+        chapter: `Bab ${String(Math.ceil(s.pageNumber / 4)).padStart(2, "0")}`,
+        tone: "paper" as const,
+        aspect: pdfResult.aspect,
+        backgroundUrl: null,
+        keywords: s.keywords,
+        elements: [],
+      }));
+
+      await setJob(jobId, { status: "rendering", progress: 95, message: `${slides.length} halaman PDF berhasil dirender menjadi gambar latar slide.` });
     }
+
+    // Persistensi slide + aset media ke database
+    await setJob(jobId, { status: "persisting", progress: 96, message: `Menyimpan ${slides.length} slide ke database…` });
+    await prisma.slide.deleteMany({ where: { projectId: project.id } });
 
     let n = 0;
     for (const slide of slides) {
