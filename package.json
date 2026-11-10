@@ -10,7 +10,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "h5p:seed": "tsx src/h5p/seed.ts"
+    "h5p:seed": "tsx src/h5p/seed.ts",
+    "test:auth": "tsx scripts/verify-auth.ts"
   },
   "keywords": [],
   "author": "",
@@ -21,15 +22,20 @@
     "@lumieducation/h5p-server": "^10.0.4",
     "@prisma/client": "^6.19.3",
     "@xmldom/xmldom": "^0.9.12",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "express": "^5.3.0",
+    "express-rate-limit": "^8.7.4",
     "fflate": "^0.8.3",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "sharp": "^0.35.5"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.3.0",
     "@types/node": "^26.6.5",
     "prisma": "^6.19.3",

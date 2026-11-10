@@ -14,6 +14,14 @@ export const config = {
   maxSlidesPerProject: num("MAX_SLIDES_PER_PROJECT", 60),
   tempTtlMs: num("TEMP_TTL_HOURS", 24) * 3600 * 1000,
   cleanupIntervalMs: num("CLEANUP_INTERVAL_MS", 3600 * 1000),
+  jwt: {
+    secret: process.env.JWT_SECRET || "h5p-generator-jwt-auth-secret-key-production-dev",
+    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+  },
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID || "",
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+  },
   onlyoffice: {
     // Kosong = render nonaktif (latar pending). Contoh dev via Docker:
     // ONLYOFFICE_URL=http://localhost:8080 ONLYOFFICE_FILE_URL_BASE=http://host.docker.internal:3000

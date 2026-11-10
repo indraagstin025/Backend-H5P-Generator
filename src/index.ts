@@ -6,10 +6,13 @@ import { prisma } from "./db.js";
 import { startCleanupJob, stopCleanupJob } from "./jobs/cleanup.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { requestLogger } from "./middleware/requestLogger.js";
+import { adminRouter } from "./routes/admin.js";
+import { authRouter } from "./routes/auth.js";
 import { h5pRouter } from "./routes/h5p.js";
 import { internalRouter } from "./routes/internal.js";
 import { jobsRouter } from "./routes/jobs.js";
 import { projectsRouter } from "./routes/projects.js";
+import { seedInitialUsers } from "./services/auth.js";
 import { ensureDirs } from "./services/storage.js";
 import { createLogger } from "./utils/logger.js";
 
@@ -18,7 +21,9 @@ const app = express();
 
 app.use(requestLogger);
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
 // Aset player mandiri (h5p-standalone frame) + halaman player sesi
 app.use("/h5p-vendor", express.static(path.join(process.cwd(), "public", "h5p-vendor")));
 
@@ -26,6 +31,8 @@ app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
 });
 
+app.use("/api/auth", authRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/ingest-jobs", jobsRouter);
 app.use("/api/h5p", h5pRouter);
@@ -40,6 +47,17 @@ app.use(errorHandler);
 async function main(): Promise<void> {
   await ensureDirs();
   startCleanupJob();
+
+  // Inisialisasi akun bawaan (Admin & User) saat server mulai
+  seedInitialUsers()
+    .then((res) => {
+      if (res.admin.created) log.info(`Akun admin bawaan diinisialisasi: ${res.admin.email}`);
+      if (res.user.created) log.info(`Akun user bawaan diinisialisasi: ${res.user.email}`);
+    })
+    .catch(() => {
+      // Abaikan jika database belum siap saat booting pertama
+    });
+
   const server = app.listen(config.port, () => {
     log.info(`Backend berjalan di http://localhost:${config.port}`, {
       storageDir: config.storageDir,

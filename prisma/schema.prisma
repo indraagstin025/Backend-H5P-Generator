@@ -1,6 +1,5 @@
-// Skema Tahap 2: proyek + slide (struktur) + job ingest.
-// Konversi isi (Tahap 3) dan paket .h5p (Tahap 4) menyusul;
-// kolom dataJson/settingsJson menampung JSON apa adanya hingga saat itu.
+// Skema Database H5P Content Generator
+// Mendukung Proyek, Slide, Ingest Job, Preview Session, serta Autentikasi Pengguna & Role (RBAC).
 
 generator client {
   provider = "prisma-client-js"
@@ -11,6 +10,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  name         String
+  passwordHash String?
+  googleId     String?   @unique
+  role         Role      @default(USER)
+  isActive     Boolean   @default(true)
+  avatarUrl    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  projects     Project[]
+
+  @@index([email])
+  @@index([role])
+}
+
 model Project {
   id             String     @id @default(uuid())
   title          String
@@ -18,10 +39,14 @@ model Project {
   sourcePath     String?
   aspect         String     @default("16:9")
   settingsJson   String     @default("{}")
+  userId         String?
+  user           User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
   slides         Slide[]
   jobs           IngestJob[]
+
+  @@index([userId])
 }
 
 model Slide {
