@@ -7,7 +7,7 @@ import { prisma } from "../db.js";
 import { projectDir } from "../services/storage.js";
 import { getH5P, installedLibraryVersion, systemUser } from "./h5pService.js";
 import type { ContentId } from "@lumieducation/h5p-server";
-import { buildContentParams } from "./contentMapper.js";
+import { buildContentParams, actionMachineName } from "./contentMapper.js";
 import type { StoredSlide } from "./contentMapper.js";
 
 export interface ExportIssue {
@@ -91,7 +91,16 @@ export interface SlideRow {
   data: StoredSlide;
 }
 
-async function loadSlides(projectId: string): Promise<{ project: { id: string; title: string; aspect: string; settings: Record<string, unknown> }; slides: SlideRow[] }> {
+interface ContentFile {
+  contentPath: string;
+  absPath?: string;
+  bytes?: Uint8Array;
+}
+
+async function loadSlides(projectId: string): Promise<{
+  project: { id: string; title: string; aspect: string; settings: Record<string, unknown> };
+  slides: SlideRow[];
+}> {
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) throw Object.assign(new Error("Proyek tidak ditemukan."), { status: 404 });
   const rows = await prisma.slide.findMany({ where: { projectId }, orderBy: { order: "asc" } });
@@ -116,72 +125,160 @@ function countBlanks(text: string): number {
 }
 
 /** Aturan checklist pra-ekspor (cerminan ExportStep frontend). */
-export function checkIssues(slides: SlideRow[], dir: string): { issues: string[]; warnings: string[] } {
+export function checkIssues(slides: SlideRow[], _dir: string): { issues: string[]; warnings: string[] } {
   const issues: string[] = [];
   const warnings: string[] = [];
   const n = slides.length;
+  const text = (v: unknown): string => (typeof v === "string" ? v : "");
+  const list = (v: unknown): Array<Record<string, unknown>> =>
+    Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
   if (n === 0) issues.push("Belum ada slide.");
   for (const s of slides) {
     for (const el of s.data.elements ?? []) {
-      if (el.kind === "goToSlide" && el.targetType !== "next" && el.targetType !== "previous") {
-        const t = Number((el as Record<string, unknown>).targetSlide) || 0;
-        if (t < 1 || t > n) issues.push(`Slide ${s.order}: tombol “${String((el as Record<string, unknown>).label ?? "pilihan")}” mengarah ke slide ${t} yang tidak ada.`);
+      const record = el as Record<string, unknown>;
+
+      if (el.kind === "goToSlide" && record.targetType !== "next" && record.targetType !== "previous") {
+        const t = Number(record.targetSlide) || 0;
+        if (t < 1 || t > n) {
+          issues.push(`Slide ${s.order}: tombol “${text(record.label) || "pilihan"}” mengarah ke slide ${t} yang tidak ada.`);
+        }
       }
-      if (el.kind === "multiChoice") {
-        const opts = (Array.isArray((el as Record<string, unknown>).options) ? (el as unknown as { options: Array<{ text?: string; correct?: boolean }> }).options : []);
-        if (opts.length < 2) issues.push(`Slide ${s.order}: kuis pilihan ganda minimal 2 pilihan jawaban.`);
-        if (!opts.some((o) => o.correct)) issues.push(`Slide ${s.order}: kuis pilihan ganda belum ada jawaban yang benar.`);
-        if (opts.some((o) => !(o.text ?? "").trim())) issues.push(`Slide ${s.order}: ada pilihan jawaban yang masih kosong.`);
-        if (!String((el as Record<string, unknown>).question ?? "").trim()) issues.push(`Slide ${s.order}: pertanyaan kuisnya masih kosong.`);
+
+      // Kuis berbasis opsi: multiChoice, singleChoice, multimediaChoice.
+      if (el.kind === "multiChoice" || el.kind === "singleChoice" || el.kind === "multimediaChoice") {
+        const opts = list(record.options);
+        const label =
+          el.kind === "multiChoice" ? "pilihan ganda" : el.kind === "singleChoice" ? "pilihan tunggal" : "multimedia choice";
+        if (opts.length < 2) issues.push(`Slide ${s.order}: kuis ${label} minimal 2 pilihan jawaban.`);
+        if (!opts.some((o) => o.correct === true)) issues.push(`Slide ${s.order}: kuis ${label} belum ada jawaban yang benar.`);
+        if (opts.some((o) => !text(o.text).trim())) issues.push(`Slide ${s.order}: ada pilihan jawaban yang masih kosong.`);
+        if (el.kind === "singleChoice" && opts.filter((o) => o.correct === true).length !== 1) {
+          issues.push(`Slide ${s.order}: kuis pilihan tunggal harus punya tepat satu jawaban benar.`);
+        }
+        if (el.kind === "singleChoice" && opts.length > 4) {
+          issues.push(`Slide ${s.order}: H5P Single Choice maksimal 4 pilihan jawaban.`);
+        }
       }
-      if (el.kind === "singleChoice") {
-        const opts = (Array.isArray((el as Record<string, unknown>).options) ? (el as unknown as { options: Array<{ text?: string; correct?: boolean }> }).options : []);
-        if (opts.length < 2) issues.push(`Slide ${s.order}: kuis pilihan tunggal minimal 2 pilihan jawaban.`);
-        if (opts.filter((o) => o.correct).length !== 1) issues.push(`Slide ${s.order}: kuis pilihan tunggal harus memiliki tepat 1 jawaban benar.`);
-        if (opts.some((o) => !(o.text ?? "").trim())) issues.push(`Slide ${s.order}: ada pilihan jawaban yang masih kosong.`);
-        if (!String((el as Record<string, unknown>).question ?? "").trim()) issues.push(`Slide ${s.order}: pertanyaan kuisnya masih kosong.`);
-      }
-      if (el.kind === "trueFalse" && !String((el as Record<string, unknown>).question ?? "").trim()) {
+
+      if (
+        (el.kind === "multiChoice" ||
+          el.kind === "singleChoice" ||
+          el.kind === "multimediaChoice" ||
+          el.kind === "trueFalse" ||
+          el.kind === "dragDrop") &&
+        !text(record.question).trim()
+      ) {
         issues.push(`Slide ${s.order}: pertanyaan kuisnya masih kosong.`);
       }
-      if (el.kind === "blanks" && countBlanks(String((el as Record<string, unknown>).text ?? "")) === 0) {
+
+      if (el.kind === "blanks" && countBlanks(text(record.text)) === 0) {
         issues.push(`Slide ${s.order}: kuis isian belum punya jawaban *berbintang*.`);
       }
-      if (el.kind === "dragWords" && countBlanks(String((el as Record<string, unknown>).text ?? "")) === 0) {
+
+      if (el.kind === "dragWords" && countBlanks(text(record.text)) === 0) {
         issues.push(`Slide ${s.order}: kuis Drag the Words belum punya kata *berbintang*.`);
       }
-      if (el.kind === "markWords" && countBlanks(String((el as Record<string, unknown>).text ?? "")) === 0) {
+
+      if (el.kind === "markWords" && countBlanks(text(record.text)) === 0) {
         issues.push(`Slide ${s.order}: kuis Mark the Words belum punya kata kunci *berbintang*.`);
       }
-      if ((el.kind === "image" || el.kind === "audio")) {
-        const raw = el as Record<string, unknown>;
-        if (!raw.asset && !raw.assetUrl && !raw.objectUrl) {
+
+      if (el.kind === "dragDrop") {
+        const zones = list(record.zones);
+        const items = list(record.items);
+        if (zones.length === 0) issues.push(`Slide ${s.order}: drag & drop belum punya zona drop.`);
+        if (items.length === 0) issues.push(`Slide ${s.order}: drag & drop belum punya item.`);
+        if (zones.some((z) => !text(z.label).trim())) issues.push(`Slide ${s.order}: ada zona drag & drop yang masih kosong.`);
+        if (items.some((it) => !text(it.text).trim())) issues.push(`Slide ${s.order}: ada item drag & drop yang masih kosong.`);
+        if (items.some((it) => !zones.some((z) => z.id === it.zoneId))) {
+          issues.push(`Slide ${s.order}: ada item drag & drop yang belum punya zona jawaban.`);
+        }
+      }
+
+      if (el.kind === "summary") {
+        const statements = list(record.statements);
+        if (statements.length < 2) issues.push(`Slide ${s.order}: summary minimal butuh 2 pernyataan.`);
+        if (!statements.some((st) => st.correct === true)) issues.push(`Slide ${s.order}: summary belum ada pernyataan yang benar.`);
+        if (statements.some((st) => !text(st.text).trim())) {
+          issues.push(`Slide ${s.order}: ada pernyataan summary yang masih kosong.`);
+        }
+      }
+
+      if (el.kind === "dialogCards") {
+        const cards = list(record.cards);
+        if (cards.length === 0) issues.push(`Slide ${s.order}: dialog cards belum punya kartu.`);
+        if (cards.some((c) => !text(c.front).trim() || !text(c.back).trim())) {
+          issues.push(`Slide ${s.order}: ada kartu dialog yang sisi depan/belakangnya kosong.`);
+        }
+      }
+
+      if (el.kind === "table" && (Number(record.rows) < 1 || Number(record.cols) < 1)) {
+        issues.push(`Slide ${s.order}: tabel minimal 1 baris dan 1 kolom.`);
+      }
+
+      if (el.kind === "link" && !text(record.url).trim()) {
+        issues.push(`Slide ${s.order}: link URL belum diisi.`);
+      }
+
+      if (el.kind === "image" || el.kind === "audio") {
+        const asset = record.asset || record.assetUrl || record.objectUrl;
+        if (!text(asset)) {
           issues.push(`Slide ${s.order}: ${el.kind === "image" ? "Gambar" : "Suara"} belum ada file-nya.`);
         }
       }
+
       if (el.kind === "video") {
-        const raw = el as Record<string, unknown>;
-        const asset = raw.asset || raw.assetUrl || raw.objectUrl;
-        const videoUrl = String(raw.videoUrl ?? "").trim();
-        if (!asset && !videoUrl) {
+        const asset = record.asset || record.assetUrl || record.objectUrl;
+        const videoUrl = text(record.videoUrl).trim();
+        if (!text(asset) && !videoUrl) {
           issues.push(`Slide ${s.order}: Video belum ada berkas atau tautan URL-nya.`);
         }
+      }
+
+      if (el.kind === "interactiveVideo" && !text(record.videoUrl).trim()) {
+        issues.push(`Slide ${s.order}: interactive video belum ada URL video.`);
       }
     }
     if (s.data.backgroundPending) warnings.push(`Slide ${s.order}: latar presisi belum ada — dipakai gradien pengganti.`);
   }
-  return { issues: [...new Set(issues)], warnings: [...new Set(warnings)] };
+  return { issues, warnings };
 }
 
 export async function buildExportReport(projectId: string): Promise<ExportReport> {
   const { slides } = await loadSlides(projectId);
   const dir = projectDir(projectId);
   const { issues, warnings } = checkIssues(slides, dir);
-  const cp = await installedLibraryVersion("H5P.CoursePresentation");
-  const libraries = cp ? [cp] : [];
-  if (!cp) issues.push("Library H5P.CoursePresentation belum terinstal di server. Jalankan: npm run h5p:seed");
-  const QUIZ_KINDS = new Set(["multiChoice", "singleChoice", "trueFalse", "blanks", "dragWords", "markWords"]);
-  const quizCount = slides.flatMap((s) => s.data.elements ?? []).filter((e) => QUIZ_KINDS.has(e.kind)).length;
+
+  // Laporkan semua library action yang benar-benar dipakai (bukan hanya CP),
+  // supaya masalah "library tidak terinstal" terlihat sebelum ekspor.
+  const needed = new Set<string>(["H5P.CoursePresentation"]);
+  for (const s of slides) {
+    for (const el of s.data.elements ?? []) {
+      const name = actionMachineName(el.kind);
+      if (name) needed.add(name);
+    }
+  }
+  const libraries: Array<{ machineName: string; majorVersion: number; minorVersion: number }> = [];
+  for (const name of needed) {
+    const ver = await installedLibraryVersion(name);
+    if (ver) libraries.push(ver);
+    else issues.push(`Library ${name} belum terinstal di server. Jalankan: npm run h5p:seed`);
+  }
+  const cp = libraries.find((l) => l.machineName === "H5P.CoursePresentation") ?? null;
+  const quizKinds = new Set([
+    "multiChoice",
+    "singleChoice",
+    "trueFalse",
+    "blanks",
+    "dragDrop",
+    "dragWords",
+    "markWords",
+    "multimediaChoice",
+    "summary",
+  ]);
+  const quizCount = slides
+    .flatMap((s) => s.data.elements ?? [])
+    .filter((e) => quizKinds.has(e.kind)).length;
   return {
     ok: issues.length === 0,
     issues,
@@ -193,17 +290,11 @@ export async function buildExportReport(projectId: string): Promise<ExportReport
   };
 }
 
-interface ContentFile {
-  contentPath: string;
-  absPath?: string;
-  bytes?: Uint8Array;
-}
-
 export async function exportProjectPackage(projectId: string): Promise<ExportResult> {
   const { project, slides } = await loadSlides(projectId);
   if (slides.length === 0) throw Object.assign(new Error("Belum ada slide."), { status: 422 });
   const dir = projectDir(projectId);
-  const { issues, warnings } = checkIssues(slides, dir);
+  const { issues } = checkIssues(slides, dir);
   if (issues.length > 0) {
     throw Object.assign(new Error(`Pemeriksaan gagal (${issues.length} masalah). Lihat export-report.`), {
       status: 422,

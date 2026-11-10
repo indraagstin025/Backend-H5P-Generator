@@ -1,5 +1,6 @@
 /**
- * SALINAN sinkron dari frontend (SINKRONISASI MANUAL — lihat SYNC.md).
+ * SALINAN sinkron dari frontend (SINKRONISASI MANUAL — lihat converter/SYNC.md).
+ * Sumber: Frontend-H5P-Generator/src/features/studio/constants/h5pModel.ts
  * Jangan ubah logika di sini; ubah di frontend lalu salin ulang.
  *
  * Domain model frontend (FR-02..FR-09, §5).
