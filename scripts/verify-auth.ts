@@ -21,7 +21,14 @@ async function testAuth() {
   assert.equal(isValid, true);
   const isInvalid = await verifyPassword("WrongPassword123!", hash);
   assert.equal(isInvalid, false);
-  console.log("✓ Test 1 Lolos: Bcrypt hashing & verification bekerja dengan benar.");
+
+  // Uji pembuktian salt unik: 2 hash dari kata sandi yang sama PERSIS harus menghasilkan hash yang BERBEDA
+  const hashUserA = await hashPassword("PasswordSama123!");
+  const hashUserB = await hashPassword("PasswordSama123!");
+  assert.notEqual(hashUserA, hashUserB, "Salt gagal: dua user dengan password sama tidak boleh menghasilkan hash yang sama!");
+  assert.equal(await verifyPassword("PasswordSama123!", hashUserA), true);
+  assert.equal(await verifyPassword("PasswordSama123!", hashUserB), true);
+  console.log("✓ Test 1 Lolos: Bcrypt hashing & verification bekerja dengan benar (Salt unik terbukti berbeda per user).");
 
   // 2. Email Validation
   assert.equal(validateEmail("User.Test@domain.com"), "user.test@domain.com");
