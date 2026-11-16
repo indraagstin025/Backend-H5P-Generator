@@ -200,6 +200,9 @@ async function mainUberSuffix(machineName: string): Promise<string> {
 
 /** Halaman player mandiri (di-iframe dari frontend). */
 export function playerPageHtml(sessionId: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)) {
+    throw Object.assign(new Error("Format ID sesi tidak valid."), { status: 400 });
+  }
   const api = `/api/h5p/session/${sessionId}`;
   return `<!doctype html>
 <html lang="id">
@@ -254,11 +257,20 @@ export async function recordFinish(
   score: number,
   maxScore: number,
 ): Promise<{ id: string; score: number; maxScore: number }> {
-  if (!Number.isFinite(score) || !Number.isFinite(maxScore) || maxScore <= 0) {
+  if (
+    !Number.isFinite(score) ||
+    !Number.isFinite(maxScore) ||
+    score < 0 ||
+    maxScore <= 0 ||
+    maxScore > 100_000 ||
+    score > maxScore
+  ) {
     throw Object.assign(new Error("Skor tidak valid."), { status: 400 });
   }
   const session = await prisma.previewSession.findUnique({ where: { id: sessionId } });
-  if (!session) throw Object.assign(new Error("Sesi tidak ditemukan."), { status: 404 });
+  if (!session || session.expiresAt.getTime() < Date.now()) {
+    throw Object.assign(new Error("Sesi tidak ditemukan atau telah kedaluwarsa."), { status: 404 });
+  }
   const attempt = await prisma.previewAttempt.create({
     data: { sessionId, projectId: session.projectId, score, maxScore },
   });

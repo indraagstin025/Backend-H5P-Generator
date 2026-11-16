@@ -106,17 +106,167 @@ export async function validateSourceFileContent(filePath: string, originalName: 
   return { hash, ext };
 }
 
+const IMAGE_MEDIA_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
+const AUDIO_MEDIA_EXT = new Set(["mp3", "wav", "ogg", "m4a"]);
+const VIDEO_MEDIA_EXT = new Set(["mp4", "m4v", "webm", "ogv"]);
+
+const MEDIA_EXT_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  m4a: "audio/mp4",
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  webm: "video/webm",
+  ogv: "video/ogg",
+};
+
+const MAX_IMAGE_OR_AUDIO_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+
+function asciiSlice(buf: Buffer, start: number, len: number): string {
+  if (buf.length < start + len) return "";
+  return buf.subarray(start, start + len).toString("latin1");
+}
+
+function validateSvgContent(buf: Buffer): void {
+  const text = buf.toString("utf8");
+  if (!/<svg[\s>]/i.test(text)) {
+    throw createHttpError(400, "Berkas .svg tidak valid (elemen akar <svg> tidak ditemukan).");
+  }
+  const dangerousSvgPattern =
+    /<script[\s>]|<\/script>|<\s*foreignObject[\s>]|on[a-z]+\s*=|javascript:|vbscript:|data:text\/html/i;
+  if (dangerousSvgPattern.test(text)) {
+    throw createHttpError(400, "Berkas SVG ditolak karena mengandung elemen atau skrip berisiko (XSS).");
+  }
+}
+
 /**
- * Memeriksa apakah berkas duplikat sudah pernah diunggah di sistem:
- * 1. Pengecekan nama berkas yang sama pada proyek aktif.
- * 2. Pengecekan isi berkas yang identik (SHA-256) pada proyek yang sudah ada.
+ * Validasi ketat file media Studio (gambar/audio/video) dengan pemeriksaan ukuran,
+ * ekstensi, serta Magic Bytes asli sebelum disimpan permanen ke assets/.
  */
-export async function ensureNoDuplicateProject(originalName: string, fileHash: string): Promise<void> {
+export async function validateAndSaveMediaAsset(
+  tmpFilePath: string,
+  originalName: string,
+  destAssetsDir: string,
+): Promise<{
+  filename: string;
+  asset: string;
+  mime: string;
+  size: number;
+}> {
+  try {
+    const rawExt = path.extname(originalName).toLowerCase().replace(/^\./, "");
+    const isImage = IMAGE_MEDIA_EXT.has(rawExt);
+    const isAudio = AUDIO_MEDIA_EXT.has(rawExt);
+    const isVideo = VIDEO_MEDIA_EXT.has(rawExt);
+
+    if (!isImage && !isAudio && !isVideo) {
+      throw createHttpError(
+        400,
+        "Format media tidak didukung. Gunakan gambar (.png/.jpg/.gif/.webp/.svg), audio (.mp3/.wav/.ogg/.m4a), atau video (.mp4/.webm/.ogv).",
+      );
+    }
+
+    const buffer = await fs.readFile(tmpFilePath);
+    if (buffer.length === 0) {
+      throw createHttpError(400, "Berkas media kosong (0 bytes).");
+    }
+
+    const maxBytes = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_OR_AUDIO_BYTES;
+    if (buffer.length > maxBytes) {
+      throw createHttpError(
+        413,
+        `Ukuran media melebihi batas maksimal ${isVideo ? 50 : 10} MB.`,
+      );
+    }
+
+    // Validasi Magic Bytes biner sesuai ekstensi yang diklaim
+    let verified = false;
+    if (rawExt === "png") {
+      verified =
+        buffer.length >= 8 &&
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4e &&
+        buffer[3] === 0x47 &&
+        buffer[4] === 0x0d &&
+        buffer[5] === 0x0a &&
+        buffer[6] === 0x1a &&
+        buffer[7] === 0x0a;
+    } else if (rawExt === "jpg" || rawExt === "jpeg") {
+      verified = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    } else if (rawExt === "gif") {
+      const hdr = asciiSlice(buffer, 0, 6);
+      verified = hdr === "GIF87a" || hdr === "GIF89a";
+    } else if (rawExt === "webp") {
+      verified = asciiSlice(buffer, 0, 4) === "RIFF" && asciiSlice(buffer, 8, 4) === "WEBP";
+    } else if (rawExt === "svg") {
+      validateSvgContent(buffer);
+      verified = true;
+    } else if (rawExt === "mp3") {
+      verified =
+        asciiSlice(buffer, 0, 3) === "ID3" ||
+        (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0);
+    } else if (rawExt === "wav") {
+      verified = asciiSlice(buffer, 0, 4) === "RIFF" && asciiSlice(buffer, 8, 4) === "WAVE";
+    } else if (rawExt === "ogg" || rawExt === "ogv") {
+      verified = asciiSlice(buffer, 0, 4) === "OggS";
+    } else if (rawExt === "m4a" || rawExt === "mp4" || rawExt === "m4v") {
+      verified = asciiSlice(buffer, 4, 4) === "ftyp";
+    } else if (rawExt === "webm") {
+      verified =
+        buffer.length >= 4 &&
+        buffer[0] === 0x1a &&
+        buffer[1] === 0x45 &&
+        buffer[2] === 0xdf &&
+        buffer[3] === 0xa3;
+    }
+
+    if (!verified) {
+      throw createHttpError(
+        400,
+        `Isi biner berkas tidak cocok dengan format .${rawExt}. Pastikan file media asli dan tidak rusak.`,
+      );
+    }
+
+    const canonExt = rawExt === "jpeg" ? "jpg" : rawExt;
+    const filename = `media-${crypto.randomUUID().slice(0, 12)}.${canonExt}`;
+    await fs.mkdir(destAssetsDir, { recursive: true });
+    await fs.writeFile(path.join(destAssetsDir, filename), buffer);
+
+    return {
+      filename,
+      asset: `assets/${filename}`,
+      mime: MEDIA_EXT_MIME[canonExt] ?? "application/octet-stream",
+      size: buffer.length,
+    };
+  } finally {
+    await fs.unlink(tmpFilePath).catch(() => undefined);
+  }
+}
+
+/**
+ * Memeriksa apakah berkas duplikat sudah pernah diunggah oleh pengguna yang sama:
+ * 1. Pengecekan nama berkas yang sama pada proyek milik pengguna tersebut.
+ * 2. Pengecekan isi berkas yang identik (SHA-256) pada proyek milik pengguna tersebut.
+ */
+export async function ensureNoDuplicateProject(
+  originalName: string,
+  fileHash: string,
+  userId: string,
+): Promise<void> {
   const cleanName = path.basename(originalName).trim();
 
-  // 1. Cek duplikasi berdasarkan nama berkas
+  // 1. Cek duplikasi berdasarkan nama berkas dalam ruang lingkup userId yang sama
   const existingByName = await prisma.project.findFirst({
-    where: { sourceFileName: cleanName },
+    where: { userId, sourceFileName: cleanName },
     select: { id: true, title: true, sourceFileName: true },
   });
 
@@ -127,14 +277,13 @@ export async function ensureNoDuplicateProject(originalName: string, fileHash: s
     );
   }
 
-  // 2. Cek duplikasi berdasarkan isi berkas (SHA-256)
-  // Ambil semua proyek yang memiliki berkas sumber di disk
-  const allProjects = await prisma.project.findMany({
-    where: { sourcePath: { not: null } },
+  // 2. Cek duplikasi berdasarkan isi berkas (SHA-256) dalam ruang lingkup userId yang sama
+  const userProjects = await prisma.project.findMany({
+    where: { userId, sourcePath: { not: null } },
     select: { id: true, title: true, sourcePath: true },
   });
 
-  for (const proj of allProjects) {
+  for (const proj of userProjects) {
     if (!proj.sourcePath) continue;
     try {
       const existingBuffer = await fs.readFile(proj.sourcePath);
@@ -142,7 +291,7 @@ export async function ensureNoDuplicateProject(originalName: string, fileHash: s
       if (existingHash === fileHash) {
         throw createHttpError(
           409,
-          `Isi berkas ini 100% identik dengan materi "${proj.title}" yang sudah ada di sistem. Silakan buka materi tersebut di beranda.`,
+          `Isi berkas ini 100% identik dengan materi "${proj.title}" yang sudah ada di akun Anda. Silakan buka materi tersebut di beranda.`,
         );
       }
     } catch (err: unknown) {

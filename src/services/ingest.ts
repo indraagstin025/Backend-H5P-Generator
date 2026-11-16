@@ -10,7 +10,7 @@ type UploadedFile = Express.Multer.File;
  * Tahap 3: validasi ketat berkas → terima file → proyek + job "parsing".
  * Route memicu runIngestJob async; klien polling GET /api/ingest-jobs/:id.
  */
-export async function ingestUpload(req: Request, title: string) {
+export async function ingestUpload(req: Request, title: string, userId: string) {
   const file = (req as Request & { file?: UploadedFile }).file;
   if (!file) throw Object.assign(new Error("File .pptx/.pdf wajib disertakan."), { status: 400 });
 
@@ -18,10 +18,13 @@ export async function ingestUpload(req: Request, title: string) {
     // 1. Validasi ketat biner: periksa Magic Bytes asli dan tolak PDF/PPTX yang dikunci kata sandi
     const { hash } = await validateSourceFileContent(file.path, file.originalname);
 
-    // 2. Validasi duplikasi: tolak jika nama berkas atau isi berkas (SHA-256) sudah ada di sistem
-    await ensureNoDuplicateProject(file.originalname, hash);
+    // 2. Validasi duplikasi dalam ruang lingkup userId yang sama
+    await ensureNoDuplicateProject(file.originalname, hash, userId);
 
-    const project = await createProject({ title: title || file.originalname.replace(/\.[^.]+$/, "") });
+    const project = await createProject({
+      title: title || file.originalname.replace(/\.[^.]+$/, ""),
+      userId,
+    });
     const full = await attachSourceFile(project.id, file.path, file.originalname);
     const job = await prisma.ingestJob.create({
       data: {

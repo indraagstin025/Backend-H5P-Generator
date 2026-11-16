@@ -1,7 +1,9 @@
 import multer from "multer";
 import { Router } from "express";
-import { asyncHandler } from "../middleware/errorHandler.js";
 import { validateClientPackage } from "../h5p/exporter.js";
+import { authenticateToken } from "../middleware/auth.js";
+import { asyncHandler } from "../middleware/errorHandler.js";
+import { assertProjectOwner, assertValidUuid } from "../services/projects.js";
 
 // Batas upload file paket .h5p diselaraskan dengan batas upload sumber materi (50 MB)
 const uploadH5p = multer({
@@ -22,7 +24,7 @@ export const h5pRouter = Router();
  * Validasi paket .h5p rakitan browser terhadap library server (Tahap 4).
  * Body: multipart field `package` (.h5p ≤50MB).
  */
-h5pRouter.post("/packages/validate", uploadH5p.single("package"), asyncHandler(async (req, res) => {
+h5pRouter.post("/packages/validate", authenticateToken, uploadH5p.single("package"), asyncHandler(async (req, res) => {
   const file = (req as typeof req & { file?: Express.Multer.File }).file;
   if (!file) {
     res.status(400).json({ error: "File .h5p wajib disertakan." });
@@ -35,33 +37,44 @@ h5pRouter.post("/packages/validate", uploadH5p.single("package"), asyncHandler(a
  * Sesi pratinjau player server (Tahap 5). Body: multipart field `package`
  * (.h5p rakitan browser ≤50MB) + opsional `title`, `projectId`.
  */
-h5pRouter.post("/preview-sessions", uploadH5p.single("package"), asyncHandler(async (req, res) => {
+h5pRouter.post("/preview-sessions", authenticateToken, uploadH5p.single("package"), asyncHandler(async (req, res) => {
   const file = (req as typeof req & { file?: Express.Multer.File }).file;
   if (!file) {
     res.status(400).json({ error: "File .h5p wajib disertakan." });
     return;
   }
+  const body = req.body as { title?: unknown; projectId?: unknown };
+  let linkedProjectId: string | undefined;
+  if (typeof body.projectId === "string" && body.projectId.trim()) {
+    const cleanId = body.projectId.trim();
+    if (!cleanId.startsWith("local-")) {
+      await assertProjectOwner(cleanId, req.user!.id);
+      linkedProjectId = cleanId;
+    }
+  }
+
   const { createPreviewSession } = await import("../h5p/player.js");
-  const body = req.body as { title?: string; projectId?: string };
   res.status(201).json({
     data: await createPreviewSession(
       file.buffer,
-      String(body.title ?? file.originalname.replace(/\.h5p$/i, "")),
-      typeof body.projectId === "string" && body.projectId ? body.projectId : undefined,
+      typeof body.title === "string" ? body.title : file.originalname.replace(/\.h5p$/i, ""),
+      linkedProjectId,
     ),
   });
 }));
 
 h5pRouter.get("/player/:sessionId", asyncHandler(async (req, res) => {
   const { playerPageHtml } = await import("../h5p/player.js");
-  const id = Array.isArray(req.params.sessionId) ? String(req.params.sessionId[0]) : String(req.params.sessionId);
+  const raw = Array.isArray(req.params.sessionId) ? String(req.params.sessionId[0]) : String(req.params.sessionId);
+  const id = assertValidUuid(raw, "ID sesi");
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(playerPageHtml(id));
 }));
 
 h5pRouter.post("/session/:sessionId/finish", asyncHandler(async (req, res) => {
   const { recordFinish } = await import("../h5p/player.js");
-  const id = Array.isArray(req.params.sessionId) ? String(req.params.sessionId[0]) : String(req.params.sessionId);
+  const raw = Array.isArray(req.params.sessionId) ? String(req.params.sessionId[0]) : String(req.params.sessionId);
+  const id = assertValidUuid(raw, "ID sesi");
   const body = req.body as { score?: unknown; maxScore?: unknown };
   res.status(201).json({
     data: await recordFinish(id, Number(body.score), Number(body.maxScore)),
@@ -70,7 +83,8 @@ h5pRouter.post("/session/:sessionId/finish", asyncHandler(async (req, res) => {
 
 h5pRouter.get("/session/:sessionId/attempts", asyncHandler(async (req, res) => {
   const { listAttempts } = await import("../h5p/player.js");
-  const id = Array.isArray(req.params.sessionId) ? String(req.params.sessionId[0]) : String(req.params.sessionId);
+  const raw = Array.isArray(req.params.sessionId) ? String(req.params.sessionId[0]) : String(req.params.sessionId);
+  const id = assertValidUuid(raw, "ID sesi");
   res.json({ data: await listAttempts(id) });
 }));
 
@@ -78,7 +92,8 @@ h5pRouter.get("/session/:sessionId/attempts", asyncHandler(async (req, res) => {
  * Didaftarkan SETELAH route spesifik di atas agar tidak menelannya. */
 h5pRouter.get("/session/:sessionId/*splat", asyncHandler(async (req, res) => {
   const { getSessionFile } = await import("../h5p/player.js");
-  const id = Array.isArray(req.params.sessionId) ? String(req.params.sessionId[0]) : String(req.params.sessionId);
+  const raw = Array.isArray(req.params.sessionId) ? String(req.params.sessionId[0]) : String(req.params.sessionId);
+  const id = assertValidUuid(raw, "ID sesi");
   const splat = (req.params as Record<string, unknown>).splat;
   const rel = Array.isArray(splat) ? splat.join("/") : String(splat ?? "");
   const found = await getSessionFile(id, rel);

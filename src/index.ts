@@ -14,6 +14,7 @@ import { internalRouter } from "./routes/internal.js";
 import { jobsRouter } from "./routes/jobs.js";
 import { projectsRouter } from "./routes/projects.js";
 import { seedInitialUsers } from "./services/auth.js";
+import { purgeOrphanedProjects } from "./services/projects.js";
 import { ensureDirs } from "./services/storage.js";
 import { createLogger } from "./utils/logger.js";
 
@@ -104,11 +105,17 @@ async function main(): Promise<void> {
   await ensureDirs();
   startCleanupJob();
 
-  // Inisialisasi akun bawaan (Admin & User @gmail.com) saat server mulai
+  // Inisialisasi akun bawaan (Admin & User @gmail.com) & bersihkan proyek yatim (userId: null) saat server mulai
   seedInitialUsers()
     .then((res) => {
       if (res.admin.created) log.info(`Akun admin bawaan diinisialisasi: ${res.admin.email}`);
       if (res.user.created) log.info(`Akun user bawaan diinisialisasi: ${res.user.email}`);
+      return purgeOrphanedProjects();
+    })
+    .then((purgedOrphans) => {
+      if (purgedOrphans > 0) {
+        log.info(`Dibersihkan ${purgedOrphans} proyek lama tanpa pemilik (userId: null).`);
+      }
     })
     .catch(() => {
       // Abaikan jika database belum siap saat booting pertama
