@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { toCpElement, StoredElement, StoredSlide, LibVersions } from "../src/h5p/contentMapper.js";
 import { checkIssues, SlideRow } from "../src/h5p/exporter.js";
+import { applyCoursePresentationPatches } from "../src/h5p/h5pService.js";
 import { convertPdfToSlides } from "../src/converter/pdfRenderer.js";
-import { validateSourceFileContent } from "../src/services/uploadValidator.js";
+import { assertValidUuid, normalizeAssetToLocalPath } from "../src/services/projects.js";
+import { validateAndSaveMediaAsset, validateSourceFileContent } from "../src/services/uploadValidator.js";
 
 // Mock LibVersions
 const mockLibs: LibVersions = {
@@ -376,6 +378,147 @@ async function runSanityTests() {
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  // ----------------------------------------------------
+  // TEST 10: Rotasi, Pop-Up Button Props & DragDrop No Zone (Opsi B Sync)
+  // ----------------------------------------------------
+  {
+    const rotatedPopupEl: StoredElement = {
+      id: "rot-1",
+      kind: "advancedText",
+      title: "Info Pop-up",
+      text: "<p>Catatan</p>",
+      position: { x: 20, y: 20, width: 30, height: 20 },
+      displayAsButton: true,
+      buttonLabel: "Lihat Info",
+      rotation: -45,
+      popupButtonInvisible: true,
+      popupButtonOpacity: 35,
+      popupButtonAutoHide: true,
+      popupButtonVisibleSeconds: 5,
+    };
+    const cpRot = toCpElement(rotatedPopupEl, 3, mockLibs, mockRemapAsset);
+    assert.equal(cpRot.rotation, 315);
+    assert.equal(cpRot.popupButtonInvisible, true);
+    assert.equal(cpRot.popupButtonOpacity, 35);
+    assert.equal(cpRot.popupButtonAutoHide, true);
+    assert.equal(cpRot.popupButtonVisibleSeconds, 5);
+
+    const dragDropEl: StoredElement = {
+      id: "dd-nozone",
+      kind: "dragDrop",
+      title: "Klasifikasi",
+      question: "Kelompokkan hewan karnivora:",
+      allowMultipleItemsPerZone: true,
+      zones: [{ id: "z-1", label: "Karnivora" }],
+      items: [
+        { id: "it-1", text: "Harimau", zoneId: "z-1" },
+        { id: "it-2", text: "Sapi (Pengecoh)", zoneId: "" },
+      ],
+      position: { x: 10, y: 10, width: 80, height: 70 },
+      displayAsButton: false,
+      buttonLabel: "",
+    };
+    const cpDd = toCpElement(dragDropEl, 3, mockLibs, mockRemapAsset);
+    const ddParams = (cpDd.action as { params: Record<string, any> }).params;
+    assert.deepEqual(ddParams.question.task.dropZones[0].correctElements, ["0"]);
+    assert.equal(ddParams.question.task.dropZones[0].single, false);
+
+    const checkNoZone = checkIssues(
+      [
+        {
+          order: 1,
+          title: "Slide DragDrop",
+          data: {
+            order: 1,
+            title: "Slide DragDrop",
+            chapter: "Bab 1",
+            tone: "paper",
+            aspect: "16:9",
+            keywords: [],
+            background: null,
+            backgroundPending: false,
+            elements: [dragDropEl],
+          },
+        },
+      ],
+      "storage/test",
+    );
+    assert.equal(checkNoZone.issues.length, 0, "Item Drag & Drop dengan zoneId kosong (No Zone) wajib valid.");
+    console.log("✓ Test 10 Lolos: Sinkronisasi rotasi, pop-up button, dan DragDrop No Zone (Opsi B) bekerja akurat.");
+    passedCount++;
+  }
+
+  // ----------------------------------------------------
+  // TEST 11: Hardening Upload Media Studio, Sanitasi Path & UUID Guard
+  // ----------------------------------------------------
+  {
+    assert.equal(
+      assertValidUuid("e93f9409-f529-4d23-b1d5-bc75143a4111"),
+      "e93f9409-f529-4d23-b1d5-bc75143a4111",
+    );
+    assert.throws(() => assertValidUuid("../../etc/passwd"), /tidak valid/);
+    assert.throws(() => assertValidUuid("';alert(1);//"), /tidak valid/);
+
+    assert.equal(
+      normalizeAssetToLocalPath("http://localhost:3000/api/projects/abc/assets/media-123.png?v=1"),
+      "assets/media-123.png",
+    );
+    assert.equal(normalizeAssetToLocalPath("blob:http://localhost:5173/12345"), null);
+    assert.equal(normalizeAssetToLocalPath("data:image/png;base64,AAAA"), null);
+    assert.equal(normalizeAssetToLocalPath("assets/.."), null);
+
+    const tmpMediaDir = await fs.mkdtemp(path.join(os.tmpdir(), "media-test-"));
+    try {
+      const assetsDir = path.join(tmpMediaDir, "assets");
+      // 1x1 PNG valid
+      const pngBytes = Buffer.from(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082",
+        "hex",
+      );
+      const tmpPng = path.join(tmpMediaDir, "upload-ok.png");
+      await fs.writeFile(tmpPng, pngBytes);
+      const savedPng = await validateAndSaveMediaAsset(tmpPng, "foto-materi.png", assetsDir);
+      assert.ok(savedPng.filename.startsWith("media-") && savedPng.filename.endsWith(".png"));
+      assert.equal(savedPng.mime, "image/png");
+
+      // File PNG palsu (teks) -> wajib ditolak
+      const tmpFakePng = path.join(tmpMediaDir, "fake.png");
+      await fs.writeFile(tmpFakePng, "Bukan gambar png");
+      await assert.rejects(
+        () => validateAndSaveMediaAsset(tmpFakePng, "fake.png", assetsDir),
+        /tidak cocok dengan format/i,
+      );
+
+      // File SVG berisi payload XSS <script> -> wajib ditolak
+      const tmpEvilSvg = path.join(tmpMediaDir, "evil.svg");
+      await fs.writeFile(tmpEvilSvg, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+      await assert.rejects(
+        () => validateAndSaveMediaAsset(tmpEvilSvg, "evil.svg", assetsDir),
+        /mengandung elemen atau skrip berisiko/i,
+      );
+
+      console.log("✓ Test 11 Lolos: Validasi Magic Bytes media Studio, anti-XSS SVG, dan UUID/path guard lolos.");
+      passedCount++;
+    } finally {
+      await fs.rm(tmpMediaDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  // ----------------------------------------------------
+  // TEST 12: Sinkronisasi Patch Runtime H5P.CoursePresentation-1.26
+  // ----------------------------------------------------
+  {
+    const patched = await applyCoursePresentationPatches();
+    assert.equal(patched, true, "Patch H5P.CoursePresentation-1.26 harus berhasil disalin ke storage");
+    const semRaw = await fs.readFile(
+      path.resolve(process.cwd(), "storage", "h5p", "libraries", "H5P.CoursePresentation-1.26", "semantics.json"),
+      "utf8",
+    );
+    assert.ok(semRaw.includes("popupButtonInvisible") && semRaw.includes("rotation"));
+    console.log("✓ Test 12 Lolos: Patch runtime H5P.CoursePresentation-1.26 (rotasi & tombol pop-up) terverifikasi.");
+    passedCount++;
   }
 
   console.log(`\n=================================================`);

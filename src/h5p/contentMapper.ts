@@ -41,6 +41,13 @@ export interface StoredSlide {
   elements: StoredElement[];
 }
 
+function overallFeedbackOf(el: Record<string, unknown>) {
+  return [
+    { from: 0, to: 99, feedback: str(el.feedbackWrong) },
+    { from: 100, to: 100, feedback: str(el.feedbackCorrect) },
+  ];
+}
+
 export interface CoursePresentationElement {
   x: number;
   y: number;
@@ -51,6 +58,11 @@ export interface CoursePresentationElement {
   displayAsButton?: boolean;
   buttonLabel?: string;
   buttonSize?: string;
+  rotation?: number;
+  popupButtonInvisible?: boolean;
+  popupButtonOpacity?: number;
+  popupButtonAutoHide?: boolean;
+  popupButtonVisibleSeconds?: number;
   goToSlide?: number;
   goToSlideType?: string;
   invisible?: boolean;
@@ -369,19 +381,33 @@ function toAction(
     }
     case "shape": {
       const shapeType = str(el.shapeType, "rectangle");
-      const isLine = shapeType === "vertical-line" || shapeType === "horizontal-line";
+      const type =
+        shapeType === "circle"
+          ? "circle"
+          : shapeType === "vertical-line"
+            ? "vertical-line"
+            : shapeType === "horizontal-line"
+              ? "horizontal-line"
+              : "rectangle";
+      const fillColor = str(el.color, "#3b82f6");
       return {
         library: libs.get("H5P.Shape"),
-        params: {
-          type: shapeType === "circle" ? "circle" : isLine ? "line" : "rectangle",
-          shape: {
-            fillColor: str(el.color, "#3b82f6"),
-            borderWidth: isLine ? 2 : 0,
-            borderColor: str(el.color, "#3b82f6"),
-            borderStyle: "solid",
-            borderRadius: shapeType === "circle" ? 50 : 0,
-          },
-        },
+        params:
+          type === "circle" || type === "rectangle"
+            ? {
+                type,
+                shape: {
+                  fillColor,
+                  borderColor: "#1f2937",
+                  borderWidth: "2",
+                  borderStyle: "solid",
+                  borderRadius: type === "circle" ? "20" : "0",
+                },
+              }
+            : {
+                type,
+                line: { borderColor: fillColor, borderWidth: "4", borderStyle: "solid" },
+              },
       };
     }
     case "image": {
@@ -435,8 +461,11 @@ function toAction(
           behaviour: {
             autoContinue: true,
             enableRetry: el.enableRetry !== false,
-            enableSolutionsButton: el.enableSolutionsButton !== false,
-            passPercentage: 100,
+            enableSolutionsButton: el.showSolution !== false && el.enableSolutionsButton !== false,
+            passPercentage: 50,
+            soundEffectsEnabled: false,
+            timeoutCorrect: 2,
+            timeoutWrong: 5,
           },
         },
       };
@@ -445,19 +474,32 @@ function toAction(
     case "multimediaChoice": {
       const opts = optionsOf(el);
       const isSingle = opts.filter((o) => o.correct).length <= 1;
+      const resolvedType =
+        el.kind === "multimediaChoice"
+          ? "auto"
+          : typeof el.singleAnswer === "boolean"
+            ? el.singleAnswer
+              ? "single"
+              : "multi"
+            : isSingle
+              ? "single"
+              : "multi";
       return {
         library: libs.get("H5P.MultiChoice"),
         params: {
           question: str(el.question),
           answers: opts.map((o) => ({
-            text: `<div>${escapeHtml(o.text)}</div>\n`,
+            text: o.text,
             correct: o.correct,
-            tipsAndFeedback: { tip: "", chosenFeedback: "", notChosenFeedback: "" },
+            tipsAndFeedback: {
+              tip: "",
+              chosenFeedback: o.correct ? str(el.feedbackCorrect) : str(el.feedbackWrong),
+              notChosenFeedback: "",
+            },
           })),
           behaviour: behaviourOf(el, {
-            type: isSingle ? "single" : "multi",
+            type: resolvedType,
             singlePoint: true,
-            randomAnswers: true,
           }),
         },
       };
@@ -494,49 +536,85 @@ function toAction(
       const itemsRaw = arr<Record<string, unknown>>(el.items).map((it, i) => ({
         id: str(it.id) || `item-${i + 1}`,
         text: str(it.text) || `Item ${i + 1}`,
-        zoneId: str(it.zoneId) || zones[0].id,
+        // String kosong valid untuk item pengecoh (No Zone)
+        zoneId: typeof it.zoneId === "string" ? it.zoneId : zones[0].id,
       }));
       const items = itemsRaw.length > 0 ? itemsRaw : [{ id: "item-1", text: "Item 1", zoneId: zones[0].id }];
       const zoneIndex = new Map(zones.map((z, i) => [z.id, i]));
       const taskWidth = 640;
-      const taskHeight = 420;
+      const columns = Math.min(3, Math.max(items.length, zones.length));
+      const gap = 16;
+      const cellWidth = (taskWidth - gap * (columns + 1)) / columns;
+      const itemWidth = cellWidth - 20;
+      const itemHeight = Math.max(
+        46,
+        ...items.map(
+          (item) =>
+            Math.ceil(Math.max(1, item.text.length) / Math.max(1, Math.floor((itemWidth - 16) / 9))) * 24 + 16,
+        ),
+      );
+      const targetFor = (item: typeof items[number]) => zoneIndex.get(item.zoneId) ?? -1;
+      const capacity = el.allowMultipleItemsPerZone === true ? items.length : 1;
+      const zoneHeight = 40 + capacity * (itemHeight + 10);
+      const zoneTop = gap + Math.ceil(items.length / columns) * (itemHeight + gap) + 32;
+      const taskHeight = Math.max(420, zoneTop + Math.ceil(zones.length / columns) * (zoneHeight + gap));
+      const xPct = (px: number) => (px / taskWidth) * 100;
+      const yPct = (px: number) => (px / taskHeight) * 100;
       const dropZones = zones.map((zone, i) => ({
-        label: zone.label,
+        label: escapeHtml(zone.label),
         showLabel: true,
-        x: 16 + (i % 3) * 205,
-        y: 290 + Math.floor(i / 3) * 70,
-        width: 190,
-        height: 58,
+        x: xPct(gap + (i % columns) * (cellWidth + gap)),
+        y: yPct(zoneTop + Math.floor(i / columns) * (zoneHeight + gap)),
+        width: cellWidth / 16,
+        height: zoneHeight / 16,
         correctElements: items
-          .map((it, itemIndex) => (it.zoneId === zone.id ? String(itemIndex) : null))
+          .map((it, itemIndex) => (targetFor(it) === i ? String(itemIndex) : null))
           .filter((v): v is string => v !== null),
         backgroundOpacity: 100,
         tipsAndFeedback: { tip: "" },
-        single: false,
+        single: el.allowMultipleItemsPerZone !== true,
         autoAlign: true,
       }));
-      const elements = items.map((it, i) => {
-        const zi = zoneIndex.get(it.zoneId) ?? 0;
-        return {
-          type: { library: "H5P.AdvancedText 1.1", params: { text: `<p>${escapeHtml(it.text)}</p>` } },
-          x: 16 + (i % 3) * 205,
-          y: 60 + Math.floor(i / 3) * 60,
-          width: 190,
-          height: 48,
-          dropZones: [String(zi)],
-          backgroundOpacity: 100,
-          multiple: false,
-        };
-      });
+      const elements = items.map((it, i) => ({
+        type: {
+          library: libs.get("H5P.AdvancedText"),
+          params: { text: `<p>${escapeHtml(it.text)}</p>` },
+          subContentId: it.id,
+        },
+        x: xPct(gap + (i % columns) * (cellWidth + gap) + 10),
+        y: yPct(gap + Math.floor(i / columns) * (itemHeight + gap)),
+        width: itemWidth / 16,
+        height: itemHeight / 16,
+        dropZones: zones.map((_, index) => String(index)),
+        backgroundOpacity: 100,
+        multiple: false,
+      }));
       return {
         library: libs.get("H5P.DragQuestion"),
         params: {
-          scoreShow: true,
+          scoreShow: "Tampilkan nilai",
+          submit: "Periksa",
+          tryAgain: "Coba lagi",
+          scoreExplanation: "Penjelasan nilai",
+          overallFeedback: overallFeedbackOf(el),
           question: {
-            settings: { size: { width: taskWidth, height: taskHeight } },
+            settings: {
+              questionTitle: escapeHtml(str(el.question) || str(el.title) || "Seret item ke zona yang sesuai."),
+              size: { width: taskWidth, height: taskHeight },
+            },
             task: { elements, dropZones },
           },
-          behaviour: behaviourOf(el, { enableCheckButton: true, singlePoint: false }),
+          behaviour: {
+            enableRetry: el.enableRetry !== false,
+            enableCheckButton: true,
+            singlePoint: false,
+            applyPenalties: false,
+            dropZoneHighlighting: "dragging",
+            autoAlignSpacing: 10,
+            enableFullScreen: false,
+            showScorePoints: true,
+            showTitle: true,
+          },
         },
       };
     }
@@ -561,9 +639,10 @@ function toAction(
       return {
         library: libs.get("H5P.DragText"),
         params: {
-          taskDescription: str(el.title) || "Tarik kata-kata ke tempat yang tepat",
+          taskDescription: str(el.title) || "Lengkapi kalimat berikut",
           textField: str(el.text),
-          behaviour: behaviourOf(el, { enableCheckButton: true, enableRetry: true }),
+          overallFeedback: overallFeedbackOf(el),
+          behaviour: behaviourOf(el, { enableCheckButton: true, enableRetry: el.enableRetry !== false }),
         },
       };
     case "markWords":
@@ -633,15 +712,22 @@ export function toCpElement(
   remapAsset: (storedPath: string, kind: string) => string,
 ): CoursePresentationElement {
   const pos = (el.position ?? {}) as StoredPosition;
+  const displayAsButton = bool(el.displayAsButton);
+  const rotationRaw = num(el.rotation, 0);
   const base: CoursePresentationElement = {
     x: clampPct(pos.x),
     y: clampPct(pos.y),
     width: clampPct(pos.width),
     height: clampPct(pos.height),
     title: str(el.title) || undefined,
-    displayAsButton: bool(el.displayAsButton),
+    displayAsButton,
     buttonLabel: str(el.buttonLabel) || undefined,
     buttonSize: "big",
+    rotation: ((rotationRaw % 360) + 360) % 360,
+    popupButtonInvisible: displayAsButton && el.popupButtonInvisible === true,
+    popupButtonOpacity: clampPct(el.popupButtonOpacity ?? 100),
+    popupButtonAutoHide: displayAsButton && el.popupButtonAutoHide === true,
+    popupButtonVisibleSeconds: Math.min(300, Math.max(0.5, num(el.popupButtonVisibleSeconds, 3))),
   };
   if (el.kind === "goToSlide") {
     const targetType = el.targetType === "next" || el.targetType === "previous" ? el.targetType : "specified";

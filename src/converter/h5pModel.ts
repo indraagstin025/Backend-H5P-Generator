@@ -55,7 +55,13 @@ interface BaseElement {
   /** FR-09: tampil inline vs ikon tombol pop-up */
   displayAsButton: boolean;
   buttonLabel: string;
+  /** Custom Course Presentation runtime: transparent but clickable pop-up trigger. */
+  popupButtonInvisible?: boolean;
+  popupButtonOpacity?: number;
+  popupButtonAutoHide?: boolean;
+  popupButtonVisibleSeconds?: number;
   title: string;
+  rotation?: number;
 }
 
 export interface AdvancedTextElement extends BaseElement {
@@ -143,7 +149,7 @@ export interface TrueFalseElement extends BaseElement, QuizBehaviour {
 export interface DragDropItem {
   id: string;
   text: string;
-  /** id zona jawaban yang benar */
+  /** id zona jawaban yang benar; string kosong untuk item pengecoh. */
   zoneId: string;
 }
 
@@ -157,6 +163,7 @@ export interface DragDropElement extends BaseElement, QuizBehaviour {
   question: string;
   items: DragDropItem[];
   zones: DragDropZone[];
+  allowMultipleItemsPerZone?: boolean;
 }
 
 export interface SummaryStatement {
@@ -448,6 +455,7 @@ export function createElement(kind: ElementKind, slideCount: number): SlideEleme
         ...base,
         kind,
         question: 'Drag item ke tempat yang sesuai',
+        allowMultipleItemsPerZone: false,
         zones: [zoneA, zoneB],
         items: [
           { id: uid(), text: 'Item 1', zoneId: zoneA.id },
@@ -532,7 +540,7 @@ export function createProject(title: string, aspect: AspectRatio, sourceFileName
 export function maxScoreOf(el: SlideElement): number {
   if (el.kind === 'blanks') return countBlanks(el.text);
   if (el.kind === 'dragWords') return countBlanks(el.text);
-  if (el.kind === 'dragDrop') return el.items.length;
+  if (el.kind === 'dragDrop') return el.items.filter((item) => el.zones.some((zone) => zone.id === item.zoneId)).length;
   if (el.kind === 'markWords') return 1;
   if (el.kind === 'summary') return 1;
   if (

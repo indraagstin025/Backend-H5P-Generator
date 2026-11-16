@@ -28,6 +28,26 @@ export interface H5PInstances {
 
 let cached: H5PInstances | null = null;
 
+/**
+ * Sinkronkan berkas patch kustom H5P.CoursePresentation-1.26 (rotasi elemen,
+ * tombol pop-up transparan & timer auto-hide) dari h5p-patches/ ke storage/h5p/libraries/.
+ */
+export async function applyCoursePresentationPatches(): Promise<boolean> {
+  const patchDir = path.resolve(process.cwd(), "h5p-patches", "H5P.CoursePresentation-1.26");
+  const targetDir = path.join(config.storageDir, "h5p", "libraries", "H5P.CoursePresentation-1.26");
+  try {
+    const [patchStat, targetStat] = await Promise.all([
+      fs.stat(patchDir).catch(() => null),
+      fs.stat(targetDir).catch(() => null),
+    ]);
+    if (!patchStat?.isDirectory() || !targetStat?.isDirectory()) return false;
+    await fs.cp(patchDir, targetDir, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Singleton Lumi (init malas — pertama kali export/seed dipanggil). */
 export async function getH5P(): Promise<H5PInstances> {
   if (cached) return cached;
@@ -38,6 +58,7 @@ export async function getH5P(): Promise<H5PInstances> {
   await fs.mkdir(librariesDir, { recursive: true });
   await fs.mkdir(contentDir, { recursive: true });
   await fs.mkdir(tempDir, { recursive: true });
+  await applyCoursePresentationPatches();
 
   const h5pConfig = new H5PConfig();
   const cacheFile = path.join(base, "cache.json");

@@ -190,7 +190,7 @@ export function checkIssues(slides: SlideRow[], _dir: string): { issues: string[
         if (items.length === 0) issues.push(`Slide ${s.order}: drag & drop belum punya item.`);
         if (zones.some((z) => !text(z.label).trim())) issues.push(`Slide ${s.order}: ada zona drag & drop yang masih kosong.`);
         if (items.some((it) => !text(it.text).trim())) issues.push(`Slide ${s.order}: ada item drag & drop yang masih kosong.`);
-        if (items.some((it) => !zones.some((z) => z.id === it.zoneId))) {
+        if (items.some((it) => text(it.zoneId) !== "" && !zones.some((z) => z.id === it.zoneId))) {
           issues.push(`Slide ${s.order}: ada item drag & drop yang belum punya zona jawaban.`);
         }
       }
@@ -308,12 +308,13 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
 
   // Pemetaan aset media (gambar, suara, video) ke subfolder paket H5P dan lokasi fisik di disk
   const remapAsset = (storedPath: string, kind: string): string => {
-    // Ambil nama berkas murni (membersihkan parameter URL jika ada)
     const clean = storedPath.split("?")[0].split("#")[0];
     const base = path.basename(clean.replace(/\\/g, "/"));
+    if (!base || base === "." || base === "..") {
+      throw Object.assign(new Error("Nama berkas aset media tidak valid."), { status: 422 });
+    }
     const folder = kind === "audio" ? "audios" : kind === "video" ? "videos" : "images";
     const contentPath = `${folder}/${base}`;
-    // Aset proyek selalu tersimpan di subfolder assets/ pada direktori proyek
     files.push({ contentPath, absPath: path.join(dir, "assets", base) });
     return contentPath;
   };
@@ -324,8 +325,8 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
     if (!s || !s.data.background) return null;
     const clean = s.data.background.split("?")[0].split("#")[0];
     const base = path.basename(clean.replace(/\\/g, "/"));
+    if (!base || base === "." || base === "..") return null;
     const contentPath = `images/${base}`;
-    // Gambar latar slide tersimpan di folder assets/ pada direktori proyek
     files.push({ contentPath, absPath: path.join(dir, "assets", base) });
     return contentPath;
   };
@@ -385,6 +386,17 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
     mainLibraryUbername,
     systemUser,
   );
+  for (const f of files) {
+    if (!f.bytes && f.absPath) {
+      const exists = await fs.stat(f.absPath).catch(() => null);
+      if (!exists?.isFile()) {
+        throw Object.assign(
+          new Error(`Berkas aset "${path.basename(f.absPath)}" tidak ditemukan di server. Unggah ulang media tersebut di Studio sebelum mengekspor.`),
+          { status: 422 },
+        );
+      }
+    }
+  }
   for (const f of files) {
     const stream = f.bytes ? Readable.from(Buffer.from(f.bytes)) : createReadStream(f.absPath as string);
     await contentStorage.addFile(savedId, f.contentPath, stream, systemUser);
