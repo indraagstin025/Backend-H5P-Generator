@@ -4,7 +4,7 @@ import { asyncHandler } from "../middleware/errorHandler.js";
 import { authenticateToken, requireRole } from "../middleware/auth.js";
 import { sanitizeUser } from "../services/auth.js";
 import { createLogger } from "../utils/logger.js";
-import type { Role } from "@prisma/client";
+import type { Prisma, Role } from "@prisma/client";
 
 const log = createLogger("admin");
 export const adminRouter = Router();
@@ -30,25 +30,29 @@ adminRouter.use(authenticateToken);
 adminRouter.use(requireRole("ADMIN"));
 
 /**
- * Daftar seluruh pengguna sistem (dengan pencarian dan filter role)
+ * Daftar seluruh pengguna sistem (dengan pencarian, filter role, filter status, dan ringkasan global)
  * GET /api/admin/users
  */
 adminRouter.get(
   "/users",
   asyncHandler(async (req, res) => {
     const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
-    const role = typeof req.query.role === "string" ? req.query.role.toUpperCase() : undefined;
+    const role = typeof req.query.role === "string" ? req.query.role.trim().toUpperCase() : undefined;
+    const statusParam = typeof req.query.status === "string" ? req.query.status.trim().toUpperCase() : "";
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const skip = (page - 1) * limit;
 
-    const where: {
-      role?: Role;
-      OR?: Array<{ email?: { contains: string; mode: "insensitive" }; name?: { contains: string; mode: "insensitive" } }>;
-    } = {};
+    const where: Prisma.UserWhereInput = {};
 
     if (role === "ADMIN" || role === "USER") {
       where.role = role as Role;
+    }
+
+    if (statusParam === "ACTIVE") {
+      where.isActive = true;
+    } else if (statusParam === "BLOCKED") {
+      where.isActive = false;
     }
 
     if (q) {
@@ -58,7 +62,7 @@ adminRouter.get(
       ];
     }
 
-    const [total, users] = await Promise.all([
+    const [total, users, totalUsers, activeUsers, adminCount] = await Promise.all([
       prisma.user.count({ where }),
       prisma.user.findMany({
         where,
@@ -69,6 +73,9 @@ adminRouter.get(
           _count: { select: { projects: true } },
         },
       }),
+      prisma.user.count(),
+      prisma.user.count({ where: { isActive: true } }),
+      prisma.user.count({ where: { role: "ADMIN" } }),
     ]);
 
     res.json({
@@ -81,6 +88,11 @@ adminRouter.get(
         page,
         limit,
         totalPages: Math.ceil(total / limit),
+      },
+      summary: {
+        totalUsers,
+        activeUsers,
+        adminCount,
       },
     });
   }),

@@ -220,10 +220,11 @@ Hak akses `ADMIN` dirancang secara spesifik **hanya untuk mengelola akun penggun
 *Seluruh endpoint di bawah ini wajib menyertakan header `Authorization: Bearer <token>` milik pengguna dengan role `ADMIN`.*
 
 #### 1. Daftar Pengguna (List Users)
-* **Endpoint**: `GET /api/admin/users?q=budi&role=USER&page=1&limit=20`
+* **Endpoint**: `GET /api/admin/users?q=budi&role=USER&status=ACTIVE&page=1&limit=20`
 * **Parameter Query**:
   * `q` *(opsional)*: Kata kunci pencarian berdasarkan nama atau email (maks 100 karakter).
   * `role` *(opsional)*: Filter role (`ADMIN` atau `USER`).
+  * `status` *(opsional)*: Filter status aktivasi (`ACTIVE` atau `BLOCKED`).
   * `page` *(opsional)*: Halaman data (default: 1).
   * `limit` *(opsional)*: Jumlah per halaman (default: 20, maks: 100).
 * **Response (200 OK)**:
@@ -247,6 +248,11 @@ Hak akses `ADMIN` dirancang secara spesifik **hanya untuk mengelola akun penggun
       "page": 1,
       "limit": 20,
       "totalPages": 1
+    },
+    "summary": {
+      "totalUsers": 2,
+      "activeUsers": 2,
+      "adminCount": 1
     }
   }
   ```

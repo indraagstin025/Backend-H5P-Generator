@@ -22,12 +22,12 @@ Dokumen ini memetakan seluruh status kesiapan integrasi antara **Backend** dan *
 
 | Fitur / Komponen | Endpoint Backend | Status Backend | Status Frontend | Status Integrasi | Keterangan & Catatan |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| **Daftar Seluruh Pengguna** | `GET /api/admin/users` | ✅ Selesai | ⏳ Terpisah | ⏳ **Siap di Backend** | Mendukung pencarian (`q` maks 100 char), filter `role`, paginasi, dan total proyek per user (`ADMIN` only). Halaman UI dikerjakan terpisah oleh rekan tim. |
-| **Detail Pengguna** | `GET /api/admin/users/:id` | ✅ Selesai | ⏳ Terpisah | ⏳ **Siap di Backend** | Validasi UUID v1–v5, mengembalikan profil user + jumlah proyek (`ADMIN` only). |
-| **Ubah Peran (Role) User** | `PATCH /api/admin/users/:id/role` | ✅ Selesai | ⏳ Terpisah | ⏳ **Siap di Backend** | Mengubah role `USER`/`ADMIN`, mencegah admin mencopot rolenya sendiri, dan menangani target hilang (`404`). |
-| **Blokir / Buka Blokir User** | `PATCH /api/admin/users/:id/status` | ✅ Selesai | ⏳ Terpisah | ⏳ **Siap di Backend** | Validasi tipe boolean ketat untuk `isActive`; akun nonaktif ditolak (`403`) di middleware auth. |
-| **Hapus Akun Pengguna** | `DELETE /api/admin/users/:id` | ✅ Selesai | ⏳ Terpisah | ⏳ **Siap di Backend** | Validasi UUID + pencegahan hapus akun sendiri. |
-| **Halaman Admin Panel (UI)** | ➖ N/A | ➖ N/A | ⏳ Dikerjakan Rekan Tim | ⏳ **Di Luar Scope** | UI Admin (`/admin/users`) sedang dikerjakan oleh rekan tim secara terpisah sesuai keputusan tim. |
+| **Daftar Seluruh Pengguna** | `GET /api/admin/users` | ✅ Selesai | ✅ Selesai | ✅ **Terintegrasi Penuh** | Mendukung pencarian (`q` maks 100 char), filter `role` (`ADMIN`/`USER`), filter `status` (`ACTIVE`/`BLOCKED`), paginasi, serta ringkasan global `summary` (`totalUsers`, `activeUsers`, `adminCount`). |
+| **Detail Pengguna** | `GET /api/admin/users/:id` | ✅ Selesai | ➖ Opsional | ✅ **Siap di Backend** | Validasi UUID v1–v5, mengembalikan profil user + jumlah proyek (`ADMIN` only). |
+| **Ubah Peran (Role) User** | `PATCH /api/admin/users/:id/role` | ✅ Selesai | ✅ Selesai | ✅ **Terintegrasi Penuh** | Tombol **Jadikan Admin / Jadikan Pengguna** di [`AdminUsersPage.tsx`](file:///C:/Users/Indra/Documents/Documents/Semester%207/H5P-Content-Generator/frontend/src/pages/admin/AdminUsersPage.tsx) dengan dialog konfirmasi dan pencegahan ubah peran diri sendiri. |
+| **Blokir / Buka Blokir User** | `PATCH /api/admin/users/:id/status` | ✅ Selesai | ✅ Selesai | ✅ **Terintegrasi Penuh** | Validasi boolean ketat `isActive`; akun nonaktif langsung ditolak (`403`) di middleware auth & dicegah memblokir diri sendiri. |
+| **Hapus Akun Pengguna** | `DELETE /api/admin/users/:id` | ✅ Selesai | ✅ Selesai | ✅ **Terintegrasi Penuh** | Menghapus akun dengan wajib ketik ulang email konfirmasi + pencegahan hapus diri sendiri. |
+| **Halaman Admin Panel & Akses Silang** | ➖ N/A | ➖ N/A | ✅ Selesai | ✅ **Terintegrasi Penuh** | Rute `/admin/users` (`ProtectedRoute adminOnly`) memakai UI [`AdminLayout.tsx`](file:///C:/Users/Indra/Documents/Documents/Semester%207/H5P-Content-Generator/frontend/src/pages/admin/AdminLayout.tsx); Admin diarahkan ke `/admin/users` saat login dan bebas beralih ke `/dashboard`, `/materi`, `/studio` lewat menu sidebar. |
 
 ---
 
@@ -73,14 +73,12 @@ Dokumen ini memetakan seluruh status kesiapan integrasi antara **Backend** dan *
 ## 6. Rangkuman Status Integrasi Akhir
 
 ```mermaid
-pie title Status Integrasi Backend & Frontend (Pasca Batch 1–4)
-    "Terintegrasi Penuh (Auth, Studio, Media, Opsi B Export)" : 21
-    "Di Luar Scope Frontend / Tim Lain (Admin UI)" : 6
+pie title Status Integrasi Backend & Frontend (Lengkap Termasuk Admin RBAC)
+    "Terintegrasi Penuh (Auth, Admin RBAC, Studio, Media, Opsi B Export)" : 27
     "Roadmap Mendatang (Google OAuth GIS)" : 1
 ```
 
-Seluruh jalur inti pengguna akhir — mulai dari **Login `@gmail.com` (JWT + `ProtectedRoute`)**, **Isolasi Kepemilikan Proyek (`userId`)**, **Upload Dokumen & Media Studio (`POST /assets`)**, **Simpan Slide & Pengaturan (`PUT /slides` + `PATCH /settings`)**, **Buat Kosong / Impor `.h5p` / Duplikat**, **Player Server & Skor Attempts**, hingga **Ekspor `.h5p` Utama via Server Lumi (Opsi B)** — telah **terintegrasi penuh** dan terverifikasi.
+Seluruh jalur aplikasi — mulai dari **Login `@gmail.com` (JWT + `ProtectedRoute`)**, **Panel Admin RBAC (`/admin/users`: cari, filter peran/status, ubah peran, blokir/buka blokir, hapus) + Akses Silang Dashboard Materi**, **Isolasi Kepemilikan Proyek (`userId`)**, **Upload Dokumen & Media Studio (`POST /assets`)**, **Simpan Slide & Pengaturan (`PUT /slides` + `PATCH /settings`)**, **Buat Kosong / Impor `.h5p` / Duplikat**, **Player Server & Skor Attempts**, hingga **Ekspor `.h5p` Utama via Server Lumi (Opsi B)** — telah **terintegrasi penuh** dan terverifikasi.
 
 > [!NOTE]
-> * Backend Admin REST API (`/api/admin/users/*`) sudah siap dan hardened untuk digunakan pada modul Admin Panel yang sedang dikembangkan terpisah oleh rekan tim.
 > * Google OAuth 2.0 (`POST /api/auth/google`) disiapkan sebagai pengembangan lanjutan setelah `GOOGLE_CLIENT_ID` tersedia.
