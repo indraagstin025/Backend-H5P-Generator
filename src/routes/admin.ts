@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../db.js";
 import { asyncHandler } from "../middleware/errorHandler.js";
 import { authenticateToken, requireRole } from "../middleware/auth.js";
-import { sanitizeUser } from "../services/auth.js";
+import { hashPassword, sanitizeUser, validateEmail, validateName, validatePassword } from "../services/auth.js";
 import { createLogger } from "../utils/logger.js";
 import type { Prisma, Role } from "@prisma/client";
 
@@ -28,6 +28,33 @@ function isNotFoundPrismaError(err: unknown): boolean {
 // Seluruh endpoint admin di bawah ini wajib terautentikasi dan memiliki Role ADMIN
 adminRouter.use(authenticateToken);
 adminRouter.use(requireRole("ADMIN"));
+
+adminRouter.post(
+  "/users",
+  asyncHandler(async (req, res) => {
+    const name = validateName(req.body?.name);
+    const email = validateEmail(req.body?.email);
+    const password = validatePassword(req.body?.password);
+    const passwordHash = await hashPassword(password);
+
+    try {
+      const user = await prisma.user.create({
+        data: { name, email, passwordHash, role: "USER", isActive: true },
+      });
+      log.info(`Pengguna ${user.email} dibuat oleh ${req.user?.email}`);
+      res.status(201).json({
+        message: "Akun pengguna berhasil ditambahkan.",
+        data: { ...sanitizeUser(user), projectsCount: 0 },
+      });
+    } catch (err) {
+      if (typeof err === "object" && err !== null && "code" in err && err.code === "P2002") {
+        res.status(409).json({ error: "Email tersebut sudah terdaftar. Gunakan email lain." });
+        return;
+      }
+      throw err;
+    }
+  }),
+);
 
 /**
  * Daftar seluruh pengguna sistem (dengan pencarian, filter role, filter status, dan ringkasan global)

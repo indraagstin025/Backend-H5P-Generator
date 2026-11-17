@@ -13,7 +13,8 @@
     "db:seed": "prisma db seed",
     "h5p:seed": "tsx src/h5p/seed.ts",
     "test:sanity": "tsx scripts/verify-backend.ts",
-    "test:auth": "tsx scripts/verify-auth.ts"
+    "test:auth": "tsx scripts/verify-auth.ts",
+    "test:admin": "tsx scripts/verify-admin-create.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
