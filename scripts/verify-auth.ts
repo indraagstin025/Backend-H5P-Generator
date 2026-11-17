@@ -10,6 +10,7 @@ import {
   validatePassword,
   validateName,
   sanitizeUser,
+  resolveSeedDefinitions,
 } from "../src/services/auth.js";
 
 async function testAuth() {
@@ -140,8 +141,32 @@ async function testAuth() {
   assert.equal(sanitized.role, "USER");
   console.log("✓ Test 6 Lolos: Sanitasi objek user tidak membocorkan hash password.");
 
+  // 7. Resolusi Konfigurasi Seeder Admin & User
+  const devSeeds = resolveSeedDefinitions({}, false);
+  assert.equal(devSeeds.admin?.email, "admin.h5p@gmail.com");
+  assert.equal(devSeeds.admin?.role, "ADMIN");
+  assert.equal(devSeeds.user?.email, "user.h5p@gmail.com");
+  assert.equal(devSeeds.user?.role, "USER");
+
+  const prodWithoutPasswords = resolveSeedDefinitions({}, true);
+  assert.equal(prodWithoutPasswords.admin, null);
+  assert.equal(prodWithoutPasswords.user, null);
+
+  const prodWithPasswords = resolveSeedDefinitions(
+    {
+      SEED_ADMIN_EMAIL: "Custom.Admin@gmail.com",
+      SEED_ADMIN_PASSWORD: "ProdAdmin99!",
+      SEED_USER_EMAIL: "Custom.User@gmail.com",
+      SEED_USER_PASSWORD: "ProdUser99!",
+    },
+    true,
+  );
+  assert.equal(prodWithPasswords.admin?.email, "custom.admin@gmail.com");
+  assert.equal(prodWithPasswords.user?.email, "custom.user@gmail.com");
+  console.log("✓ Test 7 Lolos: Seeder Admin & User valid untuk dev dan aman di produksi.");
+
   console.log("\n========================================================");
-  console.log("SEMUA 6 SKENARIO TEST & SECURITY HARDENING BERHASIL!");
+  console.log("SEMUA 7 SKENARIO TEST & SECURITY HARDENING BERHASIL!");
   console.log("========================================================");
 }
 

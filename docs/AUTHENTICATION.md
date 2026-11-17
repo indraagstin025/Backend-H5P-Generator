@@ -145,14 +145,22 @@ sequenceDiagram
   ```
 
 ### C. Akun Bawaan (Default Seeder)
-Sistem secara otomatis menginisialisasi dua akun awal (domain `@gmail.com`) ketika server pertama kali dijalankan (non-fatal bila database belum tersedia pada proses startup):
+Akun awal (domain `@gmail.com`) dapat dibuat lewat Prisma CLI Seeder (`prisma/seed.ts`):
+```bash
+npm run db:seed
+# atau:
+npx prisma db seed
+```
+Selain melalui CLI, sistem juga memanggil `seedInitialUsers()` otomatis secara idempoten saat server pengembangan dimulai (non-fatal bila database belum tersedia). Pada `NODE_ENV=production`, CLI seeder mewajibkan variabel lingkungan `SEED_ADMIN_PASSWORD` / `SEED_USER_PASSWORD` agar kata sandi default tidak dipakai di produksi.
+
+Kredensial bawaan lingkungan pengembangan:
 1. **Akun Administrator**:
-   * Email: `admin.h5p@gmail.com`
-   * Password: `Admin1234!`
+   * Email: `admin.h5p@gmail.com` (atau override `SEED_ADMIN_EMAIL`)
+   * Password: `Admin1234!` (atau override `SEED_ADMIN_PASSWORD`)
    * Role: `ADMIN`
 2. **Akun Pengguna Biasa**:
-   * Email: `user.h5p@gmail.com`
-   * Password: `User1234!`
+   * Email: `user.h5p@gmail.com` (atau override `SEED_USER_EMAIL`)
+   * Password: `User1234!` (atau override `SEED_USER_PASSWORD`)
    * Role: `USER`
 
 *(Endpoint inisialisasi manual `POST /api/auth/seed` dilindungi `authRateLimiter` dan otomatis diblokir (`403 Forbidden`) saat `NODE_ENV=production`.)*

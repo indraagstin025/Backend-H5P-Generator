@@ -10,9 +10,13 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
     "h5p:seed": "tsx src/h5p/seed.ts",
     "test:sanity": "tsx scripts/verify-backend.ts",
     "test:auth": "tsx scripts/verify-auth.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "keywords": [],
   "author": "",

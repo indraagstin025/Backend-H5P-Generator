@@ -248,53 +248,89 @@ export async function getUserById(id: string): Promise<SafeUser | null> {
   return user ? sanitizeUser(user) : null;
 }
 
+export interface SeedAccountDefinition {
+  email: string;
+  name: string;
+  password: string;
+  role: Role;
+}
+
+export interface SeedAccountStatus {
+  email: string;
+  created: boolean;
+}
+
 /**
- * Inisialisasi akun bawaan: 1 Admin dan 1 Regular User berdomain @gmail.com (Seeder).
+ * Menyusun konfigurasi akun seeder (Admin & User) dari environment variable.
+ * Di lingkungan produksi, akun hanya dibuat bila password eksplisit disetel agar
+ * kredensial bawaan pengembangan tidak pernah aktif di produksi.
  */
-export async function seedInitialUsers(): Promise<{
-  admin: { email: string; created: boolean };
-  user: { email: string; created: boolean };
-}> {
-  const adminEmail = "admin.h5p@gmail.com";
-  const userEmail = "user.h5p@gmail.com";
-
-  let adminCreated = false;
-  let userCreated = false;
-
-  // 1. Akun Admin
-  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
-  if (!existingAdmin) {
-    const adminPassHash = await hashPassword("Admin1234!");
-    await prisma.user.create({
-      data: {
-        email: adminEmail,
-        name: "Administrator H5P",
-        passwordHash: adminPassHash,
-        role: "ADMIN",
-        isActive: true,
-      },
-    });
-    adminCreated = true;
-  }
-
-  // 2. Akun User Biasa
-  const existingUser = await prisma.user.findUnique({ where: { email: userEmail } });
-  if (!existingUser) {
-    const userPassHash = await hashPassword("User1234!");
-    await prisma.user.create({
-      data: {
-        email: userEmail,
-        name: "Pengguna H5P",
-        passwordHash: userPassHash,
-        role: "USER",
-        isActive: true,
-      },
-    });
-    userCreated = true;
-  }
+export function resolveSeedDefinitions(
+  env: NodeJS.ProcessEnv = process.env,
+  isProduction: boolean = config.isProduction,
+): { admin: SeedAccountDefinition | null; user: SeedAccountDefinition | null } {
+  const buildDefinition = (
+    prefix: "SEED_ADMIN" | "SEED_USER",
+    role: Role,
+    defaults: { email: string; name: string; password: string },
+  ): SeedAccountDefinition | null => {
+    const rawPassword = env[`${prefix}_PASSWORD`]?.trim();
+    if (isProduction && !rawPassword) {
+      return null;
+    }
+    const email = validateEmail(env[`${prefix}_EMAIL`]?.trim() || defaults.email);
+    const name = validateName(env[`${prefix}_NAME`]?.trim() || defaults.name);
+    const password = validatePassword(rawPassword || defaults.password);
+    return { email, name, password, role };
+  };
 
   return {
-    admin: { email: adminEmail, created: adminCreated },
-    user: { email: userEmail, created: userCreated },
+    admin: buildDefinition("SEED_ADMIN", "ADMIN", {
+      email: "admin.h5p@gmail.com",
+      name: "Administrator H5P",
+      password: "Admin1234!",
+    }),
+    user: buildDefinition("SEED_USER", "USER", {
+      email: "user.h5p@gmail.com",
+      name: "Pengguna H5P",
+      password: "User1234!",
+    }),
   };
+}
+
+async function ensureSeedAccount(def: SeedAccountDefinition): Promise<SeedAccountStatus> {
+  const existing = await prisma.user.findUnique({ where: { email: def.email }, select: { id: true } });
+  if (existing) {
+    return { email: def.email, created: false };
+  }
+
+  const passwordHash = await hashPassword(def.password);
+  await prisma.user.create({
+    data: {
+      email: def.email,
+      name: def.name,
+      passwordHash,
+      role: def.role,
+      isActive: true,
+    },
+  });
+  return { email: def.email, created: true };
+}
+
+/**
+ * Inisialisasi akun bawaan: 1 Admin dan 1 Regular User berdomain @gmail.com (Idempoten).
+ */
+export async function seedInitialUsers(): Promise<{
+  admin: SeedAccountStatus;
+  user: SeedAccountStatus;
+}> {
+  const defs = resolveSeedDefinitions();
+  const admin = defs.admin
+    ? await ensureSeedAccount(defs.admin)
+    : { email: "admin.h5p@gmail.com", created: false };
+  const user = defs.user
+    ? await ensureSeedAccount(defs.user)
+    : { email: "user.h5p@gmail.com", created: false };
+
+  return { admin, user };
 }
