@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { unzipSync } from "fflate";
 import sharp from "sharp";
 import { convertToPngZip, isOnlyOfficeConfigured } from "./onlyoffice.js";
+import { convertPdfToSlides } from "./pdfRenderer.js";
 import { createLogger } from "../utils/logger.js";
 
 const execFileAsync = promisify(execFile);
@@ -192,14 +193,17 @@ export async function renderWithPowerPoint(
 
 /**
  * Render latar tiap halaman menjadi JPG 1920px.
- * Prioritas demo (Windows): PowerPoint langsung → OnlyOffice (prod/Docker).
- * PDF hanya lewat OnlyOffice. Kegagalan = available=false (latar pending).
+ * Prioritas alur:
+ * - PPTX: PowerPoint COM langsung di Windows → OnlyOffice (server/Docker).
+ * - PDF : WebAssembly PDFium lokal (tanpa dependensi luar) → OnlyOffice (server/Docker).
+ * Kegagalan total = available=false (latar pending).
  */
 export async function renderBackgrounds(
   sourcePath: string,
   outDir: string,
   ext: string,
 ): Promise<{ available: boolean; files: string[] }> {
+  // Jalur khusus PPTX: gunakan PowerPoint bawaan Windows jika tersedia
   if (ext === ".pptx" && isPowerPointAvailable()) {
     try {
       const files = await renderWithPowerPoint(sourcePath, outDir);
@@ -208,6 +212,18 @@ export async function renderBackgrounds(
       log.warn("PowerPoint gagal, lanjut OnlyOffice", err instanceof Error ? err.message : err);
     }
   }
+
+  // Jalur khusus PDF: gunakan engine WebAssembly PDFium lokal tanpa ketergantungan OnlyOffice
+  if (ext === ".pdf") {
+    try {
+      const pdfResult = await convertPdfToSlides(sourcePath, outDir);
+      return { available: true, files: pdfResult.backgroundFiles };
+    } catch (err) {
+      log.warn("Konversi PDF via PDFium gagal, coba fallback OnlyOffice", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Fallback cadangan: OnlyOffice Document Server jika sudah dikonfigurasi
   if (!isOnlyOfficeConfigured()) return { available: false, files: [] };
   const filetype = ext === ".pdf" ? "pdf" : "pptx";
   const fileName = path.basename(sourcePath);

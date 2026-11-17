@@ -7,8 +7,7 @@ import { prisma } from "../db.js";
 import { projectDir } from "../services/storage.js";
 import { getH5P, installedLibraryVersion, systemUser } from "./h5pService.js";
 import type { ContentId } from "@lumieducation/h5p-server";
-import { buildContentParams } from "./contentMapper.js";
-import { actionMachineName } from "./contentMapper.js";
+import { buildContentParams, actionMachineName } from "./contentMapper.js";
 import type { StoredSlide } from "./contentMapper.js";
 
 export interface ExportIssue {
@@ -86,13 +85,22 @@ export function safeFileName(title: string): string {
   return `${clean || "modul"}.h5p`;
 }
 
-interface SlideRow {
+export interface SlideRow {
   order: number;
   title: string;
   data: StoredSlide;
 }
 
-async function loadSlides(projectId: string): Promise<{ project: { id: string; title: string; aspect: string; settings: Record<string, unknown> }; slides: SlideRow[] }> {
+interface ContentFile {
+  contentPath: string;
+  absPath?: string;
+  bytes?: Uint8Array;
+}
+
+async function loadSlides(projectId: string): Promise<{
+  project: { id: string; title: string; aspect: string; settings: Record<string, unknown> };
+  slides: SlideRow[];
+}> {
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) throw Object.assign(new Error("Proyek tidak ditemukan."), { status: 404 });
   const rows = await prisma.slide.findMany({ where: { projectId }, orderBy: { order: "asc" } });
@@ -117,7 +125,7 @@ function countBlanks(text: string): number {
 }
 
 /** Aturan checklist pra-ekspor (cerminan ExportStep frontend). */
-export function checkIssues(slides: SlideRow[], dir: string): { issues: string[]; warnings: string[] } {
+export function checkIssues(slides: SlideRow[], _dir: string): { issues: string[]; warnings: string[] } {
   const issues: string[] = [];
   const warnings: string[] = [];
   const n = slides.length;
@@ -163,22 +171,26 @@ export function checkIssues(slides: SlideRow[], dir: string): { issues: string[]
         issues.push(`Slide ${s.order}: pertanyaan kuisnya masih kosong.`);
       }
 
-      if (
-        (el.kind === "blanks" || el.kind === "dragWords" || el.kind === "markWords") &&
-        countBlanks(text(record.text)) === 0
-      ) {
-        const label = el.kind === "blanks" ? "isian" : el.kind === "dragWords" ? "drag the words" : "mark the words";
-        issues.push(`Slide ${s.order}: kuis ${label} belum punya kata *berbintang*.`);
+      if (el.kind === "blanks" && countBlanks(text(record.text)) === 0) {
+        issues.push(`Slide ${s.order}: kuis isian belum punya jawaban *berbintang*.`);
+      }
+
+      if (el.kind === "dragWords" && countBlanks(text(record.text)) === 0) {
+        issues.push(`Slide ${s.order}: kuis Drag the Words belum punya kata *berbintang*.`);
+      }
+
+      if (el.kind === "markWords" && countBlanks(text(record.text)) === 0) {
+        issues.push(`Slide ${s.order}: kuis Mark the Words belum punya kata kunci *berbintang*.`);
       }
 
       if (el.kind === "dragDrop") {
         const zones = list(record.zones);
         const items = list(record.items);
-        if (zones.length === 0) issues.push(`Slide ${s.order}: drag & drop belum punya zona tujuan.`);
+        if (zones.length === 0) issues.push(`Slide ${s.order}: drag & drop belum punya zona drop.`);
         if (items.length === 0) issues.push(`Slide ${s.order}: drag & drop belum punya item.`);
         if (zones.some((z) => !text(z.label).trim())) issues.push(`Slide ${s.order}: ada zona drag & drop yang masih kosong.`);
         if (items.some((it) => !text(it.text).trim())) issues.push(`Slide ${s.order}: ada item drag & drop yang masih kosong.`);
-        if (items.some((it) => !zones.some((z) => z.id === it.zoneId))) {
+        if (items.some((it) => text(it.zoneId) !== "" && !zones.some((z) => z.id === it.zoneId))) {
           issues.push(`Slide ${s.order}: ada item drag & drop yang belum punya zona jawaban.`);
         }
       }
@@ -208,12 +220,19 @@ export function checkIssues(slides: SlideRow[], dir: string): { issues: string[]
         issues.push(`Slide ${s.order}: link URL belum diisi.`);
       }
 
-      if ((el.kind === "image" || el.kind === "audio") && !text(record.asset)) {
-        issues.push(`Slide ${s.order}: ${el.kind === "image" ? "Gambar" : "Suara"} belum ada file-nya.`);
+      if (el.kind === "image" || el.kind === "audio") {
+        const asset = record.asset || record.assetUrl || record.objectUrl;
+        if (!text(asset)) {
+          issues.push(`Slide ${s.order}: ${el.kind === "image" ? "Gambar" : "Suara"} belum ada file-nya.`);
+        }
       }
 
-      if (el.kind === "video" && !text(record.asset) && !text(record.videoUrl).trim() && !text(record.objectUrl).trim()) {
-        issues.push(`Slide ${s.order}: Video belum ada file atau URL-nya.`);
+      if (el.kind === "video") {
+        const asset = record.asset || record.assetUrl || record.objectUrl;
+        const videoUrl = text(record.videoUrl).trim();
+        if (!text(asset) && !videoUrl) {
+          issues.push(`Slide ${s.order}: Video belum ada berkas atau tautan URL-nya.`);
+        }
       }
 
       if (el.kind === "interactiveVideo" && !text(record.videoUrl).trim()) {
@@ -222,13 +241,14 @@ export function checkIssues(slides: SlideRow[], dir: string): { issues: string[]
     }
     if (s.data.backgroundPending) warnings.push(`Slide ${s.order}: latar presisi belum ada — dipakai gradien pengganti.`);
   }
-  return { issues: [...new Set(issues)], warnings: [...new Set(warnings)] };
+  return { issues, warnings };
 }
 
 export async function buildExportReport(projectId: string): Promise<ExportReport> {
   const { slides } = await loadSlides(projectId);
   const dir = projectDir(projectId);
   const { issues, warnings } = checkIssues(slides, dir);
+
   // Laporkan semua library action yang benar-benar dipakai (bukan hanya CP),
   // supaya masalah "library tidak terinstal" terlihat sebelum ekspor.
   const needed = new Set<string>(["H5P.CoursePresentation"]);
@@ -270,17 +290,11 @@ export async function buildExportReport(projectId: string): Promise<ExportReport
   };
 }
 
-interface ContentFile {
-  contentPath: string;
-  absPath?: string;
-  bytes?: Uint8Array;
-}
-
 export async function exportProjectPackage(projectId: string): Promise<ExportResult> {
   const { project, slides } = await loadSlides(projectId);
   if (slides.length === 0) throw Object.assign(new Error("Belum ada slide."), { status: 422 });
   const dir = projectDir(projectId);
-  const { issues, warnings } = checkIssues(slides, dir);
+  const { issues } = checkIssues(slides, dir);
   if (issues.length > 0) {
     throw Object.assign(new Error(`Pemeriksaan gagal (${issues.length} masalah). Lihat export-report.`), {
       status: 422,
@@ -291,23 +305,30 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
   const settings = project.settings;
   const bool = (v: unknown, fallback: boolean) => (typeof v === "boolean" ? v : fallback);
   const files: ContentFile[] = [];
+
+  // Pemetaan aset media (gambar, suara, video) ke subfolder paket H5P dan lokasi fisik di disk
   const remapAsset = (storedPath: string, kind: string): string => {
-    const base = storedPath.split("/").pop() ?? storedPath;
+    const clean = storedPath.split("?")[0].split("#")[0];
+    const base = path.basename(clean.replace(/\\/g, "/"));
+    if (!base || base === "." || base === "..") {
+      throw Object.assign(new Error("Nama berkas aset media tidak valid."), { status: 422 });
+    }
     const folder = kind === "audio" ? "audios" : kind === "video" ? "videos" : "images";
     const contentPath = `${folder}/${base}`;
-    files.push({ contentPath, absPath: path.join(dir, storedPath) });
+    files.push({ contentPath, absPath: path.join(dir, "assets", base) });
     return contentPath;
   };
+
+  // Pemetaan berkas gambar latar slide ke subfolder images/ pada paket H5P
   const backgroundPath = (idx: number): string | null => {
     const s = slides[idx];
-    if (!s) return null;
-    if (s.data.background) {
-      const base = s.data.background.split("/").pop() ?? s.data.background;
-      const contentPath = `images/${base}`;
-      files.push({ contentPath, absPath: path.join(dir, s.data.background) });
-      return contentPath;
-    }
-    return null;
+    if (!s || !s.data.background) return null;
+    const clean = s.data.background.split("?")[0].split("#")[0];
+    const base = path.basename(clean.replace(/\\/g, "/"));
+    if (!base || base === "." || base === "..") return null;
+    const contentPath = `images/${base}`;
+    files.push({ contentPath, absPath: path.join(dir, "assets", base) });
+    return contentPath;
   };
 
   const { params, mainLibraryUbername } = await buildContentParams(
@@ -365,6 +386,17 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
     mainLibraryUbername,
     systemUser,
   );
+  for (const f of files) {
+    if (!f.bytes && f.absPath) {
+      const exists = await fs.stat(f.absPath).catch(() => null);
+      if (!exists?.isFile()) {
+        throw Object.assign(
+          new Error(`Berkas aset "${path.basename(f.absPath)}" tidak ditemukan di server. Unggah ulang media tersebut di Studio sebelum mengekspor.`),
+          { status: 422 },
+        );
+      }
+    }
+  }
   for (const f of files) {
     const stream = f.bytes ? Readable.from(Buffer.from(f.bytes)) : createReadStream(f.absPath as string);
     await contentStorage.addFile(savedId, f.contentPath, stream, systemUser);

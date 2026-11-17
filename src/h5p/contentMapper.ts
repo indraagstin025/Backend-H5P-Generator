@@ -22,7 +22,7 @@ export interface StoredPosition {
 
 export interface StoredElement extends Record<string, unknown> {
   id: string;
-  kind: ElementKind;
+  kind: ElementKind | string;
   position: StoredPosition;
   displayAsButton: boolean;
   buttonLabel: string;
@@ -39,6 +39,34 @@ export interface StoredSlide {
   background: string | null;
   backgroundPending: boolean;
   elements: StoredElement[];
+}
+
+function overallFeedbackOf(el: Record<string, unknown>) {
+  return [
+    { from: 0, to: 99, feedback: str(el.feedbackWrong) },
+    { from: 100, to: 100, feedback: str(el.feedbackCorrect) },
+  ];
+}
+
+export interface CoursePresentationElement {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  action?: unknown;
+  title?: string;
+  displayAsButton?: boolean;
+  buttonLabel?: string;
+  buttonSize?: string;
+  rotation?: number;
+  popupButtonInvisible?: boolean;
+  popupButtonOpacity?: number;
+  popupButtonAutoHide?: boolean;
+  popupButtonVisibleSeconds?: number;
+  goToSlide?: number;
+  goToSlideType?: string;
+  invisible?: boolean;
+  [key: string]: unknown;
 }
 
 const IMAGE_MIME: Record<string, string> = {
@@ -65,22 +93,6 @@ const VIDEO_MIME: Record<string, string> = {
 
 type MediaKind = "image" | "audio" | "video";
 
-const MEDIA_DIR: Record<MediaKind, string> = {
-  image: "images",
-  audio: "audios",
-  video: "videos",
-};
-const MEDIA_MIME: Record<MediaKind, Record<string, string>> = {
-  image: IMAGE_MIME,
-  audio: AUDIO_MIME,
-  video: VIDEO_MIME,
-};
-const MEDIA_FALLBACK_EXT: Record<MediaKind, string> = {
-  image: "png",
-  audio: "mp3",
-  video: "mp4",
-};
-
 function extOf(filePath: string): string {
   const clean = filePath.split("?")[0].split("#")[0];
   return (clean.split(".").pop() ?? "").toLowerCase();
@@ -89,11 +101,6 @@ function extOf(filePath: string): string {
 function mimeFor(kind: string, assetPath: string): string {
   const map = kind === "audio" ? AUDIO_MIME : kind === "video" ? VIDEO_MIME : IMAGE_MIME;
   return map[extOf(assetPath)] ?? "application/octet-stream";
-}
-
-function sanitizeExt(name: string, fallback: string): string {
-  const ext = extOf(name);
-  return /^[a-z0-9]{2,4}$/.test(ext) ? ext : fallback;
 }
 
 function fileRef(filePath: string, mime: string, title: string) {
@@ -159,31 +166,24 @@ function tableHtml(el: StoredElement): string {
   return `<figure class="table"><table class="h5p-table">${body}</table></figure>`;
 }
 
-/** Path konten untuk media; pakai `asset` di disk bila ada, selain itu fallback. */
-function mediaContentPath(
-  el: StoredElement,
-  kind: MediaKind,
-  remapAsset: (storedPath: string, kind: string) => string,
-): string {
-  const stored = str(el.asset);
-  if (stored) return remapAsset(stored, kind);
-  const ext = sanitizeExt(str(el.fileName), MEDIA_FALLBACK_EXT[kind]);
-  return `${MEDIA_DIR[kind]}/el-${el.id.slice(0, 8)}.${ext}`;
-}
-
 function videoSource(
   el: StoredElement,
   remapAsset: (storedPath: string, kind: string) => string,
-): ReturnType<typeof fileRef> | null {
-  const stored = str(el.asset);
-  if (stored) {
-    const contentPath = remapAsset(stored, "video");
-    return fileRef(contentPath, mimeFor("video", contentPath), str(el.title) || str(el.fileName) || contentPath);
+): { path: string; mime: string } | null {
+  const asset = str(el.asset);
+  if (asset) {
+    const contentPath = remapAsset(asset, "video");
+    return { path: contentPath, mime: mimeFor("video", contentPath) };
   }
-  const url = str(el.videoUrl).trim() || str(el.objectUrl).trim();
-  if (!url) return null;
-  const ext = sanitizeExt(extOf(url), "mp4");
-  return fileRef(url, VIDEO_MIME[ext] ?? "video/mp4", str(el.title) || url);
+  const videoUrl = str(el.videoUrl).trim();
+  if (videoUrl) {
+    return { path: videoUrl, mime: "video/unknown" };
+  }
+  const objectUrl = str(el.objectUrl).trim();
+  if (objectUrl) {
+    return { path: objectUrl, mime: "video/unknown" };
+  }
+  return null;
 }
 
 export interface LibVersions {
@@ -192,21 +192,13 @@ export interface LibVersions {
 
 async function resolveLibs(machineNames: string[]): Promise<LibVersions> {
   const map = new Map<string, string>();
-  for (const name of new Set(machineNames)) {
+  for (const name of machineNames) {
     const ver = await installedLibraryVersion(name);
-    if (!ver) throw new Error(`Library ${name} belum terinstal di server. Jalankan: npm run h5p:seed`);
-    map.set(name, `${ver.machineName} ${ver.majorVersion}.${ver.minorVersion}`);
+    if (ver) map.set(name, `${ver.machineName} ${ver.majorVersion}.${ver.minorVersion}`);
   }
   return { get: (machineName: string) => map.get(machineName) ?? `${machineName} 1.0` };
 }
 
-/**
- * Potongan semantics.json (penjelasan lengkap ada di frontend
- * `h5pPackager.ts`): library H5P membaca params seperti
- * `params.UI.checkAnswerButton` atau `dropZone.tipsAndFeedback.tip` tanpa
- * guard, sehingga params yang tidak kita tulis membuat player meledak.
- * Default diambil dari semantics.json milik library itu sendiri.
- */
 export interface SemanticsField {
   name: string;
   type?: string;
@@ -223,22 +215,15 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Nilai default satu field semantics. `undefined` = jangan ditulis. */
 function defaultFor(node: SemanticsField): unknown {
   if (node.default !== undefined) return node.default;
   const type = node.type ?? "text";
 
-  // Jangan memalsukan berkas/berkas media/library lain. Sengaja `undefined`
-  // (bukan `null`): banyak library mengecek `!== undefined` lalu langsung
-  // membaca `.path`, sehingga `null` lolos guard dan berujung crash
-  // (mis. DragQuestion `question.settings.background.path`).
   if (type === "library") return undefined;
   if (type === "file" || type === "image" || type === "video" || type === "audio") return undefined;
 
   if (type === "group") {
     const fields = node.fields ?? [];
-    // Pola khas H5P: group berisi list bernama sama (overallFeedback).
-    // Runtime membacanya sebagai ARRAY DATAR [{from,to,feedback}].
     const sameName = fields.find((f) => f.name === node.name && f.type === "list");
     if (sameName) {
       const count = sameName.defaultNum ?? sameName.min ?? 0;
@@ -270,11 +255,6 @@ function defaultFor(node: SemanticsField): unknown {
   return "";
 }
 
-/**
- * Lengkapi `params` dengan field semantics yang belum ada. Nilai yang sudah
- * kita tulis TIDAK ditimpa; object di-merge, array diproses per elemen
- * (penting untuk `dropZones[].tipsAndFeedback`).
- */
 export function fillSemanticsDefaults(
   semantics: SemanticsField[],
   params: Record<string, unknown>,
@@ -299,7 +279,6 @@ export function fillSemanticsDefaults(
   return params;
 }
 
-/** Ambil semantics.json tiap library yang dipakai (gagal → dilewati). */
 async function loadSemantics(machineNames: string[]): Promise<Record<string, SemanticsField[]>> {
   const out: Record<string, SemanticsField[]> = {};
   const { libraryManager } = await getH5P();
@@ -322,7 +301,6 @@ async function loadSemantics(machineNames: string[]): Promise<Record<string, Sem
   return out;
 }
 
-/** Terapkan default semantics ke params root (CoursePresentation) + tiap action. */
 function applySemanticsDefaults(
   content: Record<string, unknown>,
   semantics: Record<string, SemanticsField[]> | undefined,
@@ -330,9 +308,6 @@ function applySemanticsDefaults(
   if (!semantics) return;
   const cpSemantics = semantics["H5P.CoursePresentation"];
   if (cpSemantics) {
-    // `presentation` (slides/elements) sengaja TIDAK diisi default: struktur
-    // itu kita bangun sendiri, dan default semantics di level element justru
-    // menambah `goToSlideType`/`goToSlide` ke elemen ber-action.
     fillSemanticsDefaults(
       cpSemantics.filter((f) => f.name !== "presentation"),
       content,
@@ -354,7 +329,7 @@ function applySemanticsDefaults(
 }
 
 /** Machine name library action yang dipakai frontend (setelah normalisasi). */
-const ACTION_LIB: Record<ElementKind, string | null> = {
+const ACTION_LIB: Record<string, string | null> = {
   advancedText: "H5P.AdvancedText",
   link: "H5P.Link",
   image: "H5P.Image",
@@ -374,50 +349,47 @@ const ACTION_LIB: Record<ElementKind, string | null> = {
   continuousText: "H5P.ContinuousText",
   exportableText: "H5P.ExportableTextArea",
   table: "H5P.Table",
-  // Sama dengan effectiveKindOf() frontend: IV belum punya hotspot -> Video.
   interactiveVideo: "H5P.Video",
   audioRecorder: "H5P.AudioRecorder",
-  // MultiMediaChoice wajib media per opsi; model kita teks -> MultiChoice.
   multimediaChoice: "H5P.MultiChoice",
 };
 
 export function actionMachineName(kind: string): string | null {
-  return ACTION_LIB[kind as ElementKind] ?? null;
+  return ACTION_LIB[kind] ?? null;
 }
 
 function toAction(
   el: StoredElement,
   libs: LibVersions,
   remapAsset: (storedPath: string, kind: string) => string,
-): Record<string, unknown> | null {
+): { library: string; params: Record<string, unknown> } | null {
   switch (el.kind) {
     case "advancedText":
-      return { library: libs.get("H5P.AdvancedText"), params: { text: str(el.text) } };
+      return {
+        library: libs.get("H5P.AdvancedText"),
+        params: { text: str(el.text) },
+      };
     case "link": {
-      const url = str(el.url);
+      const { protocol, url } = splitLinkUrl(str(el.url));
       return {
         library: libs.get("H5P.Link"),
         params: {
-          title: str(el.linkText) || str(el.title) || url,
-          linkWidget: splitLinkUrl(url),
-        },
-      };
-    }
-    case "image": {
-      const contentPath = mediaContentPath(el, "image", remapAsset);
-      return {
-        library: libs.get("H5P.Image"),
-        params: {
-          file: fileRef(contentPath, mimeFor("image", contentPath), str(el.title) || str(el.alt)),
-          alt: str(el.alt),
-          title: str(el.title),
+          title: str(el.linkText) || str(el.url) || "Tautan",
+          linkWidget: { protocol, url },
         },
       };
     }
     case "shape": {
-      const raw = str(el.shapeType);
+      const shapeType = str(el.shapeType, "rectangle");
       const type =
-        raw === "circle" ? "circle" : raw === "vertical-line" ? "vertical-line" : raw === "horizontal-line" ? "horizontal-line" : "rectangle";
+        shapeType === "circle"
+          ? "circle"
+          : shapeType === "vertical-line"
+            ? "vertical-line"
+            : shapeType === "horizontal-line"
+              ? "horizontal-line"
+              : "rectangle";
+      const fillColor = str(el.color, "#3b82f6");
       return {
         library: libs.get("H5P.Shape"),
         params:
@@ -425,7 +397,7 @@ function toAction(
             ? {
                 type,
                 shape: {
-                  fillColor: str(el.color, "#4CAF50"),
+                  fillColor,
                   borderColor: "#1f2937",
                   borderWidth: "2",
                   borderStyle: "solid",
@@ -434,8 +406,21 @@ function toAction(
               }
             : {
                 type,
-                line: { borderColor: str(el.color, "#4CAF50"), borderWidth: "4", borderStyle: "solid" },
+                line: { borderColor: fillColor, borderWidth: "4", borderStyle: "solid" },
               },
+      };
+    }
+    case "image": {
+      const asset = str(el.asset);
+      if (!asset) return null;
+      const contentPath = remapAsset(asset, "image");
+      return {
+        library: libs.get("H5P.Image"),
+        params: {
+          file: fileRef(contentPath, mimeFor("image", contentPath), str(el.alt) || str(el.title)),
+          alt: str(el.alt) || str(el.title),
+          title: str(el.title),
+        },
       };
     }
     case "video": {
@@ -446,21 +431,22 @@ function toAction(
           sources: source ? [source] : [],
           visuals: { fit: true, controls: true },
           playback: { autoplay: false, loop: false },
-          // H5P.Video membaca `a11y` sebagai ARRAY track
-          // (`parameters.a11y.forEach`), walau semantics.json menuliskannya
-          // sebagai group `{videoTrack: [...]}`. Tanpa ini, default semantics
-          // membuatnya object dan player crash.
           a11y: [],
         },
       };
     }
     case "audio": {
-      const contentPath = mediaContentPath(el, "audio", remapAsset);
+      const asset = str(el.asset);
+      if (!asset) return null;
+      const contentPath = remapAsset(asset, "audio");
       return {
         library: libs.get("H5P.Audio"),
         params: {
           files: [fileRef(contentPath, mimeFor("audio", contentPath), str(el.title) || contentPath)],
           playerMode: "minimalistic",
+          fitToWrapper: false,
+          controls: true,
+          autoplay: false,
         },
       };
     }
@@ -475,7 +461,7 @@ function toAction(
           behaviour: {
             autoContinue: true,
             enableRetry: el.enableRetry !== false,
-            enableSolutionsButton: el.showSolution !== false,
+            enableSolutionsButton: el.showSolution !== false && el.enableSolutionsButton !== false,
             passPercentage: 50,
             soundEffectsEnabled: false,
             timeoutCorrect: 2,
@@ -486,24 +472,34 @@ function toAction(
     }
     case "multiChoice":
     case "multimediaChoice": {
-      const feedbackCorrect = str(el.feedbackCorrect, "Benar!");
-      const feedbackWrong = str(el.feedbackWrong, "Kurang tepat.");
+      const opts = optionsOf(el);
+      const isSingle = opts.filter((o) => o.correct).length <= 1;
+      const resolvedType =
+        el.kind === "multimediaChoice"
+          ? "auto"
+          : typeof el.singleAnswer === "boolean"
+            ? el.singleAnswer
+              ? "single"
+              : "multi"
+            : isSingle
+              ? "single"
+              : "multi";
       return {
         library: libs.get("H5P.MultiChoice"),
         params: {
           question: str(el.question),
-          answers: optionsOf(el).map((o) => ({
+          answers: opts.map((o) => ({
             text: o.text,
             correct: o.correct,
             tipsAndFeedback: {
               tip: "",
-              chosenFeedback: o.correct ? feedbackCorrect : feedbackWrong,
+              chosenFeedback: o.correct ? str(el.feedbackCorrect) : str(el.feedbackWrong),
               notChosenFeedback: "",
             },
           })),
           behaviour: behaviourOf(el, {
-            // Frontend: multimediaChoice selalu "auto", multiChoice ikut sakelar.
-            type: el.kind === "multimediaChoice" ? "auto" : bool(el.singleAnswer, false) ? "single" : "multi",
+            type: resolvedType,
+            singlePoint: true,
           }),
         },
       };
@@ -523,8 +519,6 @@ function toAction(
         },
       };
     case "blanks":
-      // H5P.Blanks membaca baris soal (dengan *jawaban*) dari `questions`,
-      // bukan daftar jawaban hasil ekstraksi.
       return {
         library: libs.get("H5P.Blanks"),
         params: {
@@ -542,37 +536,56 @@ function toAction(
       const itemsRaw = arr<Record<string, unknown>>(el.items).map((it, i) => ({
         id: str(it.id) || `item-${i + 1}`,
         text: str(it.text) || `Item ${i + 1}`,
-        zoneId: str(it.zoneId) || zones[0].id,
+        // String kosong valid untuk item pengecoh (No Zone)
+        zoneId: typeof it.zoneId === "string" ? it.zoneId : zones[0].id,
       }));
       const items = itemsRaw.length > 0 ? itemsRaw : [{ id: "item-1", text: "Item 1", zoneId: zones[0].id }];
       const zoneIndex = new Map(zones.map((z, i) => [z.id, i]));
       const taskWidth = 640;
-      const taskHeight = 420;
+      const columns = Math.min(3, Math.max(items.length, zones.length));
+      const gap = 16;
+      const cellWidth = (taskWidth - gap * (columns + 1)) / columns;
+      const itemWidth = cellWidth - 20;
+      const itemHeight = Math.max(
+        46,
+        ...items.map(
+          (item) =>
+            Math.ceil(Math.max(1, item.text.length) / Math.max(1, Math.floor((itemWidth - 16) / 9))) * 24 + 16,
+        ),
+      );
+      const targetFor = (item: typeof items[number]) => zoneIndex.get(item.zoneId) ?? -1;
+      const capacity = el.allowMultipleItemsPerZone === true ? items.length : 1;
+      const zoneHeight = 40 + capacity * (itemHeight + 10);
+      const zoneTop = gap + Math.ceil(items.length / columns) * (itemHeight + gap) + 32;
+      const taskHeight = Math.max(420, zoneTop + Math.ceil(zones.length / columns) * (zoneHeight + gap));
+      const xPct = (px: number) => (px / taskWidth) * 100;
+      const yPct = (px: number) => (px / taskHeight) * 100;
       const dropZones = zones.map((zone, i) => ({
-        label: zone.label,
+        label: escapeHtml(zone.label),
         showLabel: true,
-        x: 16 + (i % 3) * 205,
-        y: 290 + Math.floor(i / 3) * 70,
-        width: 190,
-        height: 58,
+        x: xPct(gap + (i % columns) * (cellWidth + gap)),
+        y: yPct(zoneTop + Math.floor(i / columns) * (zoneHeight + gap)),
+        width: cellWidth / 16,
+        height: zoneHeight / 16,
         correctElements: items
-          .map((it, itemIndex) => (it.zoneId === zone.id ? String(itemIndex) : null))
+          .map((it, itemIndex) => (targetFor(it) === i ? String(itemIndex) : null))
           .filter((v): v is string => v !== null),
         backgroundOpacity: 100,
-        single: true,
-        autoAlign: false,
+        tipsAndFeedback: { tip: "" },
+        single: el.allowMultipleItemsPerZone !== true,
+        autoAlign: true,
       }));
-      const elements = items.map((item, i) => ({
+      const elements = items.map((it, i) => ({
         type: {
-          library: "H5P.AdvancedText 1.1",
-          params: { text: `<p>${escapeHtml(item.text)}</p>` },
-          subContentId: item.id,
+          library: libs.get("H5P.AdvancedText"),
+          params: { text: `<p>${escapeHtml(it.text)}</p>` },
+          subContentId: it.id,
         },
-        x: 16 + (i % 3) * 205,
-        y: 16 + Math.floor(i / 3) * 56,
-        width: 190,
-        height: 46,
-        dropZones: [String(zoneIndex.get(item.zoneId) ?? 0)],
+        x: xPct(gap + (i % columns) * (cellWidth + gap) + 10),
+        y: yPct(gap + Math.floor(i / columns) * (itemHeight + gap)),
+        width: itemWidth / 16,
+        height: itemHeight / 16,
+        dropZones: zones.map((_, index) => String(index)),
         backgroundOpacity: 100,
         multiple: false,
       }));
@@ -583,8 +596,12 @@ function toAction(
           submit: "Periksa",
           tryAgain: "Coba lagi",
           scoreExplanation: "Penjelasan nilai",
+          overallFeedback: overallFeedbackOf(el),
           question: {
-            settings: { size: { width: taskWidth, height: taskHeight } },
+            settings: {
+              questionTitle: escapeHtml(str(el.question) || str(el.title) || "Seret item ke zona yang sesuai."),
+              size: { width: taskWidth, height: taskHeight },
+            },
             task: { elements, dropZones },
           },
           behaviour: {
@@ -596,7 +613,7 @@ function toAction(
             autoAlignSpacing: 10,
             enableFullScreen: false,
             showScorePoints: true,
-            showTitle: false,
+            showTitle: true,
           },
         },
       };
@@ -611,7 +628,6 @@ function toAction(
           intro: str(el.intro),
           summaries: [
             {
-              // H5P.Summary: `summary` = array string, `tip` = string.
               summary: ordered.map((s) => s.text),
               tip: str(el.feedbackCorrect),
             },
@@ -625,14 +641,15 @@ function toAction(
         params: {
           taskDescription: str(el.title) || "Lengkapi kalimat berikut",
           textField: str(el.text),
-          behaviour: behaviourOf(el, { enableCheckButton: true }),
+          overallFeedback: overallFeedbackOf(el),
+          behaviour: behaviourOf(el, { enableCheckButton: true, enableRetry: el.enableRetry !== false }),
         },
       };
     case "markWords":
       return {
         library: libs.get("H5P.MarkTheWords"),
         params: {
-          taskDescription: str(el.title) || "Tandai kata yang benar",
+          taskDescription: str(el.title) || "Tandai kata yang tepat",
           textField: str(el.text),
           behaviour: behaviourOf(el, { enableCheckButton: true, showScorePoints: true }),
         },
@@ -672,9 +689,6 @@ function toAction(
           sources: source ? [source] : [],
           visuals: { fit: true, controls: true },
           playback: { autoplay: false, loop: false },
-          // H5P.Video membaca `a11y` sebagai ARRAY track
-          // (`parameters.a11y.forEach`), walau semantics.json menuliskannya
-          // sebagai group `{videoTrack: [...]}`.
           a11y: [],
         },
       };
@@ -696,17 +710,24 @@ export function toCpElement(
   slideCount: number,
   libs: LibVersions,
   remapAsset: (storedPath: string, kind: string) => string,
-): Record<string, unknown> | null {
+): CoursePresentationElement {
   const pos = (el.position ?? {}) as StoredPosition;
-  const base = {
+  const displayAsButton = bool(el.displayAsButton);
+  const rotationRaw = num(el.rotation, 0);
+  const base: CoursePresentationElement = {
     x: clampPct(pos.x),
     y: clampPct(pos.y),
     width: clampPct(pos.width),
     height: clampPct(pos.height),
     title: str(el.title) || undefined,
-    displayAsButton: bool(el.displayAsButton),
+    displayAsButton,
     buttonLabel: str(el.buttonLabel) || undefined,
     buttonSize: "big",
+    rotation: ((rotationRaw % 360) + 360) % 360,
+    popupButtonInvisible: displayAsButton && el.popupButtonInvisible === true,
+    popupButtonOpacity: clampPct(el.popupButtonOpacity ?? 100),
+    popupButtonAutoHide: displayAsButton && el.popupButtonAutoHide === true,
+    popupButtonVisibleSeconds: Math.min(300, Math.max(0.5, num(el.popupButtonVisibleSeconds, 3))),
   };
   if (el.kind === "goToSlide") {
     const targetType = el.targetType === "next" || el.targetType === "previous" ? el.targetType : "specified";
@@ -721,8 +742,7 @@ export function toCpElement(
     };
   }
   const action = toAction(el, libs, remapAsset);
-  if (!action) return null;
-  return { ...base, action };
+  return { ...base, action: action ?? undefined };
 }
 
 /** Kumpulkan machineName yang dibutuhkan + rakit params CoursePresentation. */
@@ -743,7 +763,7 @@ export async function buildContentParams(
   const needed = new Set<string>(["H5P.CoursePresentation"]);
   for (const s of slides) {
     for (const el of s.elements) {
-      const lib = actionMachineName(el.kind);
+      const lib = actionMachineName(str(el.kind));
       if (lib) needed.add(lib);
     }
   }
@@ -755,7 +775,7 @@ export async function buildContentParams(
   const outSlides = slides.map((s, idx) => ({
     elements: s.elements
       .map((el) => toCpElement(el, n, libs, opts.remapAsset))
-      .filter((el): el is Record<string, unknown> => el !== null),
+      .filter((el) => el.action !== undefined || el.goToSlideType !== undefined),
     keywords: (s.keywords ?? [])
       .filter((k) => (k.main ?? "").trim().length > 0)
       .map((k) => ({ main: k.main, subs: (k.subs ?? []).filter((x) => x.trim().length > 0) })),
