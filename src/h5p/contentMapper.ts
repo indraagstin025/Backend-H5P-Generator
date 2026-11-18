@@ -752,6 +752,7 @@ export async function buildContentParams(
     title: string;
     language: string;
     keywordListEnabled: boolean;
+    requireQuestionsBeforeNavigation: boolean;
     activeSurface: boolean;
     hideSummarySlide: boolean;
     showSolutionButton: boolean;
@@ -793,6 +794,7 @@ export async function buildContentParams(
   const params: Record<string, unknown> = {
     presentation: {
       slides: outSlides,
+      generatorRequireQuestionsBeforeNavigation: opts.requireQuestionsBeforeNavigation,
       keywordListEnabled: opts.keywordListEnabled,
       keywordListAlwaysShow: false,
       keywordListAutoHide: false,

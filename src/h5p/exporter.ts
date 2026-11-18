@@ -337,6 +337,7 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
       title: project.title,
       language: "id",
       keywordListEnabled: bool(settings.keywordListEnabled, true),
+      requireQuestionsBeforeNavigation: bool(settings.requireQuestionsBeforeNavigation, true),
       activeSurface: bool(settings.activeSurface, false),
       hideSummarySlide: bool(settings.hideSummarySlide, false),
       showSolutionButton: bool(settings.showSolutionButton, true),

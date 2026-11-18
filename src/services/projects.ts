@@ -34,6 +34,7 @@ function sanitizeTitle(raw: unknown): string {
 
 const ALLOWED_SETTING_FLAGS = [
   "keywordListEnabled",
+  "requireQuestionsBeforeNavigation",
   "activeSurface",
   "hideSummarySlide",
   "showSolutionButton",
