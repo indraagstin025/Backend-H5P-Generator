@@ -19,6 +19,8 @@ export interface SafeUser {
   role: Role;
   isActive: boolean;
   avatarUrl: string | null;
+  birthDate: string | null;
+  profileCompleted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,6 +54,8 @@ export function sanitizeUser(user: {
   role: Role;
   isActive: boolean;
   avatarUrl: string | null;
+  birthDate?: Date | null;
+  profileCompleted?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }): SafeUser {
@@ -62,6 +66,8 @@ export function sanitizeUser(user: {
     role: user.role,
     isActive: user.isActive,
     avatarUrl: user.avatarUrl,
+    birthDate: user.birthDate ? user.birthDate.toISOString().slice(0, 10) : null,
+    profileCompleted: user.profileCompleted !== false,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -139,6 +145,67 @@ export function validateEmail(email: unknown): string {
   return clean;
 }
 
+/**
+ * Validasi format email standar untuk login (mengizinkan @gmail.com maupun domain Google Workspace).
+ */
+export function validateLoginEmail(email: unknown): string {
+  if (typeof email !== "string") {
+    throw createHttpError(400, "Format alamat email tidak valid.");
+  }
+  const clean = email.trim().toLowerCase();
+  const emailRegex = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+  if (!emailRegex.test(clean) || clean.includes("..") || clean.startsWith(".") || clean.includes(".@") || clean.length > 254) {
+    throw createHttpError(400, "Format alamat email tidak valid.");
+  }
+  return clean;
+}
+
+/**
+ * Bangkitkan kata sandi bawaan acak yang aman (12 karakter kombinasi huruf & angka) untuk akun Google baru.
+ */
+export function generateDefaultPassword(): string {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  const all = upper + lower + digits;
+  const chars = [
+    upper[crypto.randomInt(upper.length)],
+    lower[crypto.randomInt(lower.length)],
+    digits[crypto.randomInt(digits.length)],
+  ];
+  for (let i = chars.length; i < 12; i++) {
+    chars.push(all[crypto.randomInt(all.length)]);
+  }
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
+export function validateBirthDate(raw: unknown): Date {
+  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
+    throw createHttpError(400, "Tanggal lahir wajib diisi dengan format YYYY-MM-DD.");
+  }
+  const clean = raw.trim();
+  const [y, m, d] = clean.split("-").map(Number);
+  const parsed = new Date(Date.UTC(y, m - 1, d));
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getUTCFullYear() !== y ||
+    parsed.getUTCMonth() !== m - 1 ||
+    parsed.getUTCDate() !== d
+  ) {
+    throw createHttpError(400, "Tanggal lahir tidak valid.");
+  }
+  const today = new Date();
+  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  if (parsed > todayUtc || y < 1900) {
+    throw createHttpError(400, "Tanggal lahir harus berada di antara tahun 1900 hingga hari ini.");
+  }
+  return parsed;
+}
+
 export function validatePassword(password: unknown): string {
   if (typeof password !== "string" || password.length < 8) {
     throw createHttpError(400, "Kata sandi minimal harus 8 karakter.");
@@ -204,7 +271,7 @@ export async function registerUser(input: RegisterInput): Promise<{ user: SafeUs
 }
 
 export async function loginUser(input: LoginInput): Promise<{ user: SafeUser; token: string }> {
-  const email = validateEmail(input.email);
+  const email = validateLoginEmail(input.email);
   if (typeof input.password !== "string" || input.password.length === 0) {
     throw createHttpError(400, "Kata sandi wajib diisi.");
   }
@@ -246,6 +313,36 @@ export async function getUserById(id: string): Promise<SafeUser | null> {
     where: { id },
   });
   return user ? sanitizeUser(user) : null;
+}
+
+export async function completeUserProfile(
+  userId: string,
+  input: {
+    name: unknown;
+    birthDate: unknown;
+    newPassword?: unknown;
+  },
+): Promise<SafeUser> {
+  const name = validateName(input.name);
+  const birthDate = validateBirthDate(input.birthDate);
+
+  let passwordHash: string | undefined;
+  if (typeof input.newPassword === "string" && input.newPassword.length > 0) {
+    const validated = validatePassword(input.newPassword);
+    passwordHash = await hashPassword(validated);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      name,
+      birthDate,
+      profileCompleted: true,
+      ...(passwordHash ? { passwordHash } : {}),
+    },
+  });
+
+  return sanitizeUser(updated);
 }
 
 export interface SeedAccountDefinition {
