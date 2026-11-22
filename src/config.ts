@@ -1,4 +1,11 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
+
+// Muat berkas .env secara otomatis di lokal bila tersedia (Node 20.12+/22+/24+)
+const envPath = path.resolve(".env");
+if (existsSync(envPath) && typeof process.loadEnvFile === "function") {
+  process.loadEnvFile(envPath);
+}
 
 function num(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -39,13 +46,18 @@ export const config = {
   tempTtlMs: num("TEMP_TTL_HOURS", 24) * 3600 * 1000,
   cleanupIntervalMs: num("CLEANUP_INTERVAL_MS", 3600 * 1000),
   corsOrigins: parseCorsOrigins(),
+  frontendUrl: (process.env.FRONTEND_URL ?? "http://localhost:5173").replace(/\/+$/, ""),
   jwt: {
     secret: resolveJwtSecret(),
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   },
   google: {
-    clientId: process.env.GOOGLE_CLIENT_ID || "",
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+    clientId: (process.env.GOOGLE_CLIENT_ID ?? "").trim(),
+    clientSecret: (process.env.GOOGLE_CLIENT_SECRET ?? "").trim(),
+    redirectUri: (
+      process.env.GOOGLE_REDIRECT_URI ??
+      `http://localhost:${num("PORT", 3000)}/api/auth/google/callback`
+    ).trim(),
   },
   onlyoffice: {
     // Kosong = render nonaktif (latar pending). Contoh dev via Docker:
