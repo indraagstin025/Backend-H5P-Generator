@@ -9,6 +9,7 @@ import { authenticateToken } from "../middleware/auth.js";
 import { asyncHandler, discardUploaded } from "../middleware/errorHandler.js";
 import { uploadMediaAsset, uploadSource } from "../middleware/upload.js";
 import { ingestUpload } from "../services/ingest.js";
+import { recordExportHistory } from "../services/exports.js";
 import { projectDir } from "../services/storage.js";
 import { validateAndSaveMediaAsset } from "../services/uploadValidator.js";
 import { createLogger } from "../utils/logger.js";
@@ -246,9 +247,23 @@ projectsRouter.get("/:id/export-report", authenticateToken, asyncHandler(async (
 
 projectsRouter.post("/:id/export", authenticateToken, asyncHandler(async (req, res) => {
   const projectId = paramId(req.params.id);
-  await assertProjectOwner(projectId, req.user!.id);
+  const project = await assertProjectOwner(projectId, req.user!.id);
   try {
     const result = await exportProjectPackage(projectId);
+    const sizeKb = Math.max(1, Math.round(result.buffer.length / 1024));
+    await recordExportHistory({
+      userId: req.user!.id,
+      projectId: project.id,
+      title: project.title,
+      format: "H5P",
+      sizeKb,
+      sourceFileName: project.sourceFileName,
+    }).catch((err) => {
+      log.warn("Gagal mencatat riwayat ekspor ke database", {
+        projectId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
     res.send(result.buffer);

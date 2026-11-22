@@ -521,6 +521,30 @@ async function runSanityTests() {
     passedCount++;
   }
 
+  // ----------------------------------------------------
+  // TEST 13: Validasi Payload Riwayat Ekspor (ExportHistory)
+  // ----------------------------------------------------
+  {
+    const { validateExportInput } = await import("../src/services/exports.js");
+    const valid = validateExportInput({
+      projectId: "550e8400-e29b-41d4-a716-446655440000",
+      title: "  Modul\nInteraktif  ",
+      format: "H5P",
+      sizeKb: 256.4,
+      sourceFileName: "../../folder/slide-materi.pptx",
+    });
+    assert.equal(valid.title, "Modul Interaktif");
+    assert.equal(valid.format, "H5P");
+    assert.equal(valid.sizeKb, 256);
+    assert.equal(valid.sourceFileName, "slide-materi.pptx");
+
+    assert.throws(() => validateExportInput({ title: " ", format: "H5P", sizeKb: 10 }), /wajib diisi/i);
+    assert.throws(() => validateExportInput({ title: "Valid", format: "ZIP", sizeKb: 10 }), /H5P atau SCORM 1.2/i);
+    assert.throws(() => validateExportInput({ title: "Valid", format: "H5P", sizeKb: 0 }), /antara 1/i);
+    console.log("✓ Test 13 Lolos: Validasi payload ExportHistory (allowlist format, ukuran, basename & sanitasi) akurat.");
+    passedCount++;
+  }
+
   console.log(`\n=================================================`);
   console.log(`SEMUA ${passedCount} SKENARIO PENGUJIAN OTOMATIS BERHASIL!`);
   console.log(`=================================================\n`);

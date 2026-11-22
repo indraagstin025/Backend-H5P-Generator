@@ -9,6 +9,7 @@ import { apiRateLimiter } from "./middleware/rateLimiter.js";
 import { requestLogger } from "./middleware/requestLogger.js";
 import { adminRouter } from "./routes/admin.js";
 import { authRouter } from "./routes/auth.js";
+import { exportsRouter } from "./routes/exports.js";
 import { h5pRouter } from "./routes/h5p.js";
 import { internalRouter } from "./routes/internal.js";
 import { jobsRouter } from "./routes/jobs.js";
@@ -90,6 +91,7 @@ app.get("/api/health", (_request, response) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/exports", exportsRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/ingest-jobs", jobsRouter);
 app.use("/api/h5p", h5pRouter);
