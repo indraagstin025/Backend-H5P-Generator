@@ -1,10 +1,37 @@
 import { applyCoursePresentationPatches, getH5P, systemUser } from "./h5pService.js";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { config } from "../config.js";
+
+async function installLocalLibraries(): Promise<void> {
+  const source = path.resolve(process.env.H5P_LIBRARY_SOURCE || "../Frontend-H5P-Generator/public/h5p-libraries");
+  const available = await fs.stat(source).catch(() => null);
+  if (!available?.isDirectory()) {
+    if (process.env.H5P_LIBRARY_SOURCE) throw new Error("Folder H5P_LIBRARY_SOURCE tidak ditemukan.");
+    return;
+  }
+  const target = path.join(config.storageDir, "h5p", "libraries");
+  await fs.mkdir(target, { recursive: true });
+  for (const entry of await fs.readdir(source, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const metadataPath = path.join(source, entry.name, "library.json");
+    const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8")) as { machineName: string; majorVersion: number; minorVersion: number };
+    if (entry.name !== `${metadata.machineName}-${metadata.majorVersion}.${metadata.minorVersion}`) {
+      throw new Error(`Folder library tidak sesuai metadata: ${entry.name}`);
+    }
+    const destination = path.join(target, entry.name);
+    if (await fs.stat(destination).catch(() => null)) continue;
+    await fs.cp(path.join(source, entry.name), destination, { recursive: true, force: false, errorOnExist: true });
+    console.log(`✓ ${entry.name} dipasang dari library lokal.`);
+  }
+}
 
 /**
  * Seed library H5P dari Hub (sekali saja / idempoten) + terapkan patch runtime CoursePresentation 1.26.
  *   npm run h5p:seed
  */
 async function main(): Promise<void> {
+  await installLocalLibraries();
   const { editor, libraryManager } = await getH5P();
   const wanted = [
     "H5P.CoursePresentation",
@@ -56,6 +83,9 @@ async function main(): Promise<void> {
     Array<{ majorVersion: number; minorVersion: number }>
   >;
   const names = Object.keys(all).sort();
+  if (!names.includes("H5P.CoursePresentation")) {
+    throw new Error("Course Presentation belum terpasang. Isi H5P_LIBRARY_SOURCE dengan folder library H5P lokal, lalu jalankan ulang npm run h5p:seed.");
+  }
   console.log(`Total ${names.length} library terinstal:`);
   for (const name of names) {
     const versions = (all[name] ?? []).map((v) => `${v.majorVersion}.${v.minorVersion}`).join(", ");

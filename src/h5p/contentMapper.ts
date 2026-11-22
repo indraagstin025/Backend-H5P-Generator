@@ -752,6 +752,8 @@ export async function buildContentParams(
     title: string;
     language: string;
     keywordListEnabled: boolean;
+    requireQuestionsBeforeNavigation: boolean;
+    autoAdvance: string;
     activeSurface: boolean;
     hideSummarySlide: boolean;
     showSolutionButton: boolean;
@@ -769,7 +771,7 @@ export async function buildContentParams(
   }
   const libs = await resolveLibs([...needed]);
   const cp = await installedLibraryVersion("H5P.CoursePresentation");
-  if (!cp) throw new Error("Library H5P.CoursePresentation belum terinstal. Jalankan: npm run h5p:seed");
+  if (!cp) throw Object.assign(new Error("Library H5P.CoursePresentation belum terinstal di server. Jalankan npm run h5p:seed pada backend."), { status: 503 });
 
   const n = slides.length;
   const outSlides = slides.map((s, idx) => ({
@@ -793,6 +795,8 @@ export async function buildContentParams(
   const params: Record<string, unknown> = {
     presentation: {
       slides: outSlides,
+      generatorRequireQuestionsBeforeNavigation: opts.requireQuestionsBeforeNavigation,
+      generatorAutoAdvance: opts.autoAdvance,
       keywordListEnabled: opts.keywordListEnabled,
       keywordListAlwaysShow: false,
       keywordListAutoHide: false,

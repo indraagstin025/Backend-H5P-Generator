@@ -34,6 +34,7 @@ function sanitizeTitle(raw: unknown): string {
 
 const ALLOWED_SETTING_FLAGS = [
   "keywordListEnabled",
+  "requireQuestionsBeforeNavigation",
   "activeSurface",
   "hideSummarySlide",
   "showSolutionButton",
@@ -55,6 +56,11 @@ function sanitizeSettingsPatch(raw: unknown, currentJson: string): string {
   }
 
   const patch = raw as Record<string, unknown>;
+  if (patch.autoAdvance !== undefined) {
+    const value = patch.autoAdvance as Record<string, unknown>;
+    if (!value || typeof value !== 'object' || typeof value.enabled !== 'boolean' || !['all', 'selected'].includes(String(value.scope)) || !['next', 'previous', 'specified'].includes(String(value.targetType)) || typeof value.targetSlideId !== 'string' || !Array.isArray(value.rules) || !value.rules.every((rule: unknown) => !!rule && typeof rule === 'object' && typeof (rule as Record<string, unknown>).sourceId === 'string' && typeof (rule as Record<string, unknown>).targetId === 'string')) throw httpError(400, 'Pengaturan perpindahan otomatis tidak valid.');
+    base.autoAdvance = value;
+  }
   if ("language" in patch && patch.language !== undefined) {
     if (typeof patch.language !== "string" || !/^[a-zA-Z-]{2,10}$/.test(patch.language.trim())) {
       throw httpError(400, "Kode bahasa pengaturan proyek tidak valid.");

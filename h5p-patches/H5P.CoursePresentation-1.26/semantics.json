@@ -6,6 +6,13 @@
     "widget": "coursepresentation",
     "fields": [
       {
+        "name": "generatorRequireQuestionsBeforeNavigation",
+        "type": "boolean",
+        "label": "Require all questions before navigation",
+        "default": true,
+        "optional": true
+      },
+      {
         "name": "slides",
         "importance": "high",
         "type": "list",

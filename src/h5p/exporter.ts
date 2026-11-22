@@ -86,6 +86,7 @@ export function safeFileName(title: string): string {
 }
 
 export interface SlideRow {
+  id: string;
   order: number;
   title: string;
   data: StoredSlide;
@@ -114,7 +115,7 @@ async function loadSlides(projectId: string): Promise<{
     project: { id: project.id, title: project.title, aspect: project.aspect, settings },
     slides: rows.map((r) => {
       const data = JSON.parse(r.dataJson) as StoredSlide;
-      return { order: r.order, title: r.title, data };
+      return { id: r.id, order: r.order, title: r.title, data };
     }),
   };
 }
@@ -337,6 +338,17 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
       title: project.title,
       language: "id",
       keywordListEnabled: bool(settings.keywordListEnabled, true),
+      requireQuestionsBeforeNavigation: bool(settings.requireQuestionsBeforeNavigation, true),
+      autoAdvance: JSON.stringify((() => {
+        const auto = settings.autoAdvance as { enabled?: boolean; scope?: string; targetType?: string; targetSlideId?: string; rules?: Array<{ sourceId: string; targetId: string }> } | undefined;
+        if (!auto?.enabled || settings.requireQuestionsBeforeNavigation === false) return [];
+        return slides.map((slide, index) => {
+          if (auto.scope === 'selected') return slides.findIndex((item) => item.id === auto.rules?.find((rule) => rule.sourceId === slide.id)?.targetId);
+          if (auto.targetType === 'next') return index + 1 < slides.length ? index + 1 : -1;
+          if (auto.targetType === 'previous') return index > 0 ? index - 1 : -1;
+          return slides.findIndex((item) => item.id === auto.targetSlideId);
+        });
+      })()),
       activeSurface: bool(settings.activeSurface, false),
       hideSummarySlide: bool(settings.hideSummarySlide, false),
       showSolutionButton: bool(settings.showSolutionButton, true),

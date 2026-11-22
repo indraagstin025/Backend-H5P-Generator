@@ -11,6 +11,14 @@ npm run prisma:migrate # sekali (atau tiap ubah schema.prisma)
 npm run dev            # http://localhost:3000
 ```
 
+Sebelum mengekspor H5P pertama kali, jalankan `npm run h5p:seed`.
+Seeder memasang library yang belum tersedia dari folder lokal
+`../Frontend-H5P-Generator/public/h5p-libraries`, kemudian mencoba H5P Hub.
+Untuk lokasi lain, set `H5P_LIBRARY_SOURCE` pada environment proses seeder.
+Library yang sudah terpasang dilewati. Jika Course Presentation tetap tidak
+tersedia, seeder melaporkan kegagalan dan ekspor mengembalikan pesan untuk
+menjalankan seed, bukan error 500 umum.
+
 ## API (Tahap 2)
 
 | Method | Endpoint | Keterangan |
