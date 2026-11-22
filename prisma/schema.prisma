@@ -16,18 +16,20 @@ enum Role {
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  name         String
-  passwordHash String?
-  googleId     String?   @unique
-  role         Role      @default(USER)
-  isActive     Boolean   @default(true)
-  avatarUrl    String?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  projects     Project[]
-  exports      ExportHistory[]
+  id               String          @id @default(uuid())
+  email            String          @unique
+  name             String
+  passwordHash     String?
+  googleId         String?         @unique
+  role             Role            @default(USER)
+  isActive         Boolean         @default(true)
+  avatarUrl        String?
+  birthDate        DateTime?       @db.Date
+  profileCompleted Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  projects         Project[]
+  exports          ExportHistory[]
 
   @@index([email])
   @@index([role])
