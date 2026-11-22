@@ -7,11 +7,15 @@ import {
   generateToken,
   verifyToken,
   validateEmail,
+  validateLoginEmail,
   validatePassword,
   validateName,
+  validateBirthDate,
+  generateDefaultPassword,
   sanitizeUser,
   resolveSeedDefinitions,
 } from "../src/services/auth.js";
+import { issueExchangeCode } from "../src/services/googleAuth.js";
 
 async function testAuth() {
   console.log("=== MEMULAI TEST UNIT & SECURITY AUTENTIKASI ===");
@@ -165,8 +169,32 @@ async function testAuth() {
   assert.equal(prodWithPasswords.user?.email, "custom.user@gmail.com");
   console.log("✓ Test 7 Lolos: Seeder Admin & User valid untuk dev dan aman di produksi.");
 
+  // 8. Validasi Email Login Non-@gmail.com (Google Workspace)
+  assert.equal(validateLoginEmail("  Dosen@Kampus.AC.ID "), "dosen@kampus.ac.id");
+  assert.equal(validateLoginEmail("user@gmail.com"), "user@gmail.com");
+  assert.throws(() => validateLoginEmail("invalid-email"), /Format alamat email tidak valid/);
+  assert.throws(() => validateLoginEmail("user..name@kampus.ac.id"), /Format alamat email tidak valid/);
+  console.log("✓ Test 8 Lolos: Validasi email login mendukung akun Google Workspace & @gmail.com.");
+
+  // 9. Sandi Bawaan Otomatis & Validasi Tanggal Lahir
+  const autoPass = generateDefaultPassword();
+  assert.equal(validatePassword(autoPass), autoPass);
+  assert.ok(autoPass.length >= 12);
+
+  const dob = validateBirthDate("2000-05-17");
+  assert.equal(dob.toISOString().slice(0, 10), "2000-05-17");
+  assert.throws(() => validateBirthDate("2000-02-31"), /tidak valid/);
+  assert.throws(() => validateBirthDate("2999-01-01"), /hingga hari ini/);
+  assert.throws(() => validateBirthDate("17-05-2000"), /YYYY-MM-DD/);
+  console.log("✓ Test 9 Lolos: Sandi bawaan otomatis memenuhi kebijakan password & validasi tanggal lahir akurat.");
+
+  // 10. One-time Exchange Code OAuth
+  const code = issueExchangeCode("550e8400-e29b-41d4-a716-446655440000", autoPass);
+  assert.ok(typeof code === "string" && code.length >= 32);
+  console.log("✓ Test 10 Lolos: One-time exchange code OAuth terbangkitkan dengan entropi aman.");
+
   console.log("\n========================================================");
-  console.log("SEMUA 7 SKENARIO TEST & SECURITY HARDENING BERHASIL!");
+  console.log("SEMUA 10 SKENARIO TEST & SECURITY HARDENING BERHASIL!");
   console.log("========================================================");
 }
 
