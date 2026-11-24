@@ -5,6 +5,7 @@
     "importance": "high",
     "widget": "coursepresentation",
     "fields": [
+      { "name": "generatorAutoAdvance", "type": "text", "label": "Automatic slide targets", "optional": true },
       {
         "name": "generatorRequireQuestionsBeforeNavigation",
         "type": "boolean",

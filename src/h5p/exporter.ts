@@ -430,6 +430,16 @@ export async function exportProjectPackage(projectId: string): Promise<ExportRes
   const buffer = Buffer.concat(chunks);
 
   verifyPackageStructure(buffer, mainLibraryUbername.split(" ")[0]);
+  if (settings.requireQuestionsBeforeNavigation !== false && (settings.autoAdvance as { enabled?: boolean } | undefined)?.enabled) {
+    const entries = unzipSync(new Uint8Array(buffer));
+    const presentation = JSON.parse(strFromU8(entries["content/content.json"]))?.presentation;
+    const libraryDir = mainLibraryUbername.replace(" ", "-");
+    const runtime = entries[`${libraryDir}/dist/h5p-course-presentation.js`];
+    const semantics = entries[`${libraryDir}/semantics.json`];
+    if (typeof presentation?.generatorAutoAdvance !== "string" || !runtime || !strFromU8(runtime).includes("generatorAutoAdvance") || !semantics || !strFromU8(semantics).includes('"generatorAutoAdvance"')) {
+      throw new Error("Ekspor gagal: library H5P belum memuat pengaturan pindah slide otomatis. Perbarui library Course Presentation sebelum mengekspor.");
+    }
+  }
   const report = await buildExportReport(projectId);
   return { buffer, filename: safeFileName(project.title), report };
 }
