@@ -321,13 +321,20 @@ export async function completeUserProfile(
     name: unknown;
     birthDate: unknown;
     newPassword?: unknown;
+    currentPassword?: unknown;
   },
 ): Promise<SafeUser> {
   const name = validateName(input.name);
-  const birthDate = validateBirthDate(input.birthDate);
+  const current = await prisma.user.findUnique({ where: { id: userId } });
+  if (!current) throw createHttpError(404, "Pengguna tidak ditemukan.");
+  const birthDate = input.birthDate ? validateBirthDate(input.birthDate) : current.birthDate;
+  if (!current.profileCompleted && !birthDate) throw createHttpError(400, "Tanggal lahir wajib diisi.");
 
   let passwordHash: string | undefined;
   if (typeof input.newPassword === "string" && input.newPassword.length > 0) {
+    if (current.profileCompleted && (!current.passwordHash || typeof input.currentPassword !== "string" || !(await verifyPassword(input.currentPassword, current.passwordHash)))) {
+      throw createHttpError(400, "Kata sandi saat ini tidak sesuai.");
+    }
     const validated = validatePassword(input.newPassword);
     passwordHash = await hashPassword(validated);
   }

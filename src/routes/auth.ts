@@ -150,6 +150,7 @@ authRouter.patch(
       name: body.name,
       birthDate: body.birthDate,
       newPassword: body.newPassword,
+      currentPassword: body.currentPassword,
     });
     log.info(`Profil pengguna diperbarui: ${updated.email} (${updated.id})`);
     res.json({
